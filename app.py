@@ -5,7 +5,7 @@ import googleapiclient.discovery
 from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
-import pinecone
+from pinecone import Pinecone
 
 # Load environment variables
 load_dotenv()
@@ -16,7 +16,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize Pinecone
 try:
-    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1-aws")
+    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1")
     index_name = "youtube-blog-index"
     index = pinecone.Index(index_name)
     st.success("Connected to Pinecone database successfully.")
