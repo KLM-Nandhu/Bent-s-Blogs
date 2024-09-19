@@ -89,8 +89,47 @@ def store_in_pinecone(video_id, blog_content):
     except Exception as e:
         st.error(f"Failed to store blog post in Pinecone: {str(e)}")
 
-# Function to generate blog posts
-def generate_blog_posts(channel_id):
+# Function to generate a blog post for a single video
+def generate_single_blog_post(video_id):
+    video_details = get_video_details(video_id)
+    if video_details:
+        video_title = video_details['snippet']['title']
+        video_description = video_details['snippet']['description']
+        transcript = get_video_transcript(video_id)
+        comments = get_video_comments(video_id)
+
+        if transcript:
+            content_for_summary = transcript
+            summary_prompt = "Summarize this video transcript in a blog post format:"
+        else:
+            content_for_summary = f"Title: {video_title}\n\nDescription: {video_description}"
+            summary_prompt = "Based on this video title and description, generate a blog post summary:"
+
+        summary = process_with_openai(content_for_summary, summary_prompt)
+        enhanced_comments = process_with_openai('\n'.join(comments), "Highlight and analyze the most interesting points from these comments:")
+
+        if summary and enhanced_comments:
+            blog_post = f"""
+            # {video_title}
+
+            Video URL: https://www.youtube.com/watch?v={video_id}
+            Views: {video_details['statistics']['viewCount']}
+            Likes: {video_details['statistics']['likeCount']}
+
+            ## Summary
+            {summary}
+
+            ## Highlighted Comments Analysis
+            {enhanced_comments}
+            """
+
+            store_in_pinecone(video_id, blog_post)
+            return blog_post
+    
+    return None
+
+# Function to generate blog posts for a channel
+def generate_channel_blog_posts(channel_id):
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
         request = youtube.search().list(
@@ -106,41 +145,9 @@ def generate_blog_posts(channel_id):
 
         for item in response['items']:
             video_id = item['id']['videoId']
-            video_title = item['snippet']['title']
-            video_description = item['snippet']['description']
-
-            video_details = get_video_details(video_id)
-            if video_details:
-                transcript = get_video_transcript(video_id)
-                comments = get_video_comments(video_id)
-
-                if transcript:
-                    content_for_summary = transcript
-                    summary_prompt = "Summarize this video transcript in a blog post format:"
-                else:
-                    content_for_summary = f"Title: {video_title}\n\nDescription: {video_description}"
-                    summary_prompt = "Based on this video title and description, generate a blog post summary:"
-
-                summary = process_with_openai(content_for_summary, summary_prompt)
-                enhanced_comments = process_with_openai('\n'.join(comments), "Highlight and analyze the most interesting points from these comments:")
-
-                if summary and enhanced_comments:
-                    blog_post = f"""
-                    # {video_title}
-
-                    Video URL: https://www.youtube.com/watch?v={video_id}
-                    Views: {video_details['statistics']['viewCount']}
-                    Likes: {video_details['statistics']['likeCount']}
-
-                    ## Summary
-                    {summary}
-
-                    ## Highlighted Comments Analysis
-                    {enhanced_comments}
-                    """
-
-                    blog_posts.append((video_id, blog_post))
-                    store_in_pinecone(video_id, blog_post)
+            blog_post = generate_single_blog_post(video_id)
+            if blog_post:
+                blog_posts.append((video_id, blog_post))
 
         return blog_posts
     except HttpError as e:
@@ -171,10 +178,21 @@ def main():
     default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
     channel_id = st.text_input("Enter your YouTube Channel ID", value=default_channel_id)
 
-    if st.button("Generate Blog Posts"):
-        if channel_id:
+    # Add input for single video ID
+    video_id = st.text_input("Or enter a specific YouTube Video ID (optional)")
+
+    if st.button("Generate Blog Post(s)"):
+        if video_id:
+            with st.spinner("Generating blog post... This may take a while."):
+                blog_post = generate_single_blog_post(video_id)
+            if blog_post:
+                st.success("Blog post generated successfully!")
+                st.markdown(blog_post)
+            else:
+                st.warning("Failed to generate blog post. Please check the video ID and try again.")
+        elif channel_id:
             with st.spinner("Generating blog posts... This may take a while."):
-                blog_posts = generate_blog_posts(channel_id)
+                blog_posts = generate_channel_blog_posts(channel_id)
             
             if blog_posts:
                 st.success(f"Generated {len(blog_posts)} blog posts!")
@@ -183,10 +201,11 @@ def main():
                         st.markdown(post)
             else:
                 st.warning("No blog posts were generated. Please check the error messages above and try again.")
-                if st.button("Retry"):
-                    st.experimental_rerun()
         else:
-            st.error("Please enter a YouTube Channel ID.")
+            st.error("Please enter either a YouTube Channel ID or a specific Video ID.")
+
+        if st.button("Generate Another"):
+            st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
