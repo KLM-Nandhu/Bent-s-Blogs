@@ -1,14 +1,19 @@
 import streamlit as st
+import os
+from dotenv import load_dotenv
 import googleapiclient.discovery
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
 import pinecone
 
+# Load environment variables
+load_dotenv()
+
 # Initialize OpenAI
-openai.api_key = st.secrets["openai_api_key"]
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize Pinecone (Serverless)
-pinecone.init(api_key=st.secrets["pinecone_api_key"])
+pinecone.init(api_key=os.getenv("PINECONE_API_KEY"))
 index_name = "youtube-blog-index"
 if index_name not in pinecone.list_indexes():
     pinecone.create_index(index_name, dimension=1536)  # OpenAI embeddings are 1536 dimensions
@@ -43,7 +48,7 @@ def get_video_comments(api_key, video_id, max_results=10):
 # Function to process content with OpenAI
 def process_with_openai(content, prompt):
     response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": content}
@@ -68,7 +73,7 @@ def main():
     st.title("Enhanced YouTube Blog Post Generator")
 
     # Input for YouTube API Key
-    youtube_api_key = st.text_input("Enter your YouTube API Key", type="password")
+    youtube_api_key = st.text_input("Enter your YouTube API Key", value=os.getenv("YOUTUBE_API_KEY"), type="password")
 
     # Set default YouTube Channel ID
     default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
