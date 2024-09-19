@@ -5,7 +5,6 @@ import googleapiclient.discovery
 from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
-from pinecone import Pinecone
 
 # Load environment variables
 load_dotenv()
@@ -14,15 +13,20 @@ load_dotenv()
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialize Pinecone
+# Try to import Pinecone, but continue if it's not available
 try:
+    import pinecone
     pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1")
     index_name = "youtube-blog-index"
     index = pinecone.Index(index_name)
     st.success("Connected to Pinecone database successfully.")
+    use_pinecone = True
+except ImportError:
+    st.warning("Pinecone library not found. Running without vector database functionality.")
+    use_pinecone = False
 except Exception as e:
     st.error(f"Failed to connect to Pinecone: {str(e)}")
-    index = None
+    use_pinecone = False
 
 # Function to get video details
 def get_video_details(video_id):
@@ -74,10 +78,9 @@ def process_with_openai(content, prompt):
         st.error(f"Error processing with OpenAI: {str(e)}")
         return None
 
-# Function to store data in Pinecone
+# Function to store data in Pinecone (if available)
 def store_in_pinecone(video_id, blog_content):
-    if index is None:
-        st.warning("Pinecone connection not available. Blog post will not be stored.")
+    if not use_pinecone:
         return
     try:
         vector = openai.Embedding.create(input=[blog_content], model="text-embedding-ada-002")["data"][0]["embedding"]
