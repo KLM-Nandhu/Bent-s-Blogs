@@ -16,7 +16,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize Pinecone
 try:
-    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1")
+    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1-aws")
     index_name = "youtube-blog-index"
     index = pinecone.Index(index_name)
     st.success("Connected to Pinecone database successfully.")
@@ -32,7 +32,7 @@ def get_video_details(video_id):
         response = request.execute()
         return response['items'][0]
     except HttpError as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"An error occurred while fetching video details: {e}")
         return None
 
 # Function to get video transcript
@@ -56,7 +56,7 @@ def get_video_comments(video_id, max_results=10):
         response = request.execute()
         return [item['snippet']['topLevelComment']['snippet']['textDisplay'] for item in response['items']]
     except HttpError as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"An error occurred while fetching comments: {e}")
         return []
 
 # Function to process content with OpenAI
@@ -134,7 +134,23 @@ def generate_blog_posts(channel_id):
 
         return blog_posts
     except HttpError as e:
-        st.error(f"An error occurred: {e}")
+        error_details = e.error_details[0] if e.error_details else {}
+        if error_details.get('reason') == 'accessNotConfigured':
+            st.error("YouTube Data API v3 is not enabled for your project. Please follow these steps:")
+            st.markdown("""
+            1. Go to https://console.developers.google.com/
+            2. Select your project from the top dropdown menu.
+            3. In the left sidebar, click on "APIs & Services" > "Library"
+            4. Search for "YouTube Data API v3"
+            5. Click on the API and then click "Enable"
+            6. Wait a few minutes for the changes to propagate.
+            7. Try again.
+            """)
+        else:
+            st.error(f"An error occurred while accessing the YouTube API: {str(e)}")
+        return []
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
         return []
 
 # Streamlit app
@@ -156,7 +172,9 @@ def main():
                     with st.expander(f"Blog Post for Video {video_id}"):
                         st.markdown(post)
             else:
-                st.warning("No blog posts were generated. Please check the channel ID and try again.")
+                st.warning("No blog posts were generated. Please check the error messages above and try again.")
+                if st.button("Retry"):
+                    st.experimental_rerun()
         else:
             st.error("Please enter a YouTube Channel ID.")
 
