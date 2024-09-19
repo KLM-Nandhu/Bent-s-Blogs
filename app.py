@@ -45,8 +45,7 @@ def get_video_transcript(video_id):
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return ' '.join([entry['text'] for entry in transcript])
     except Exception as e:
-        st.warning(f"Transcript not available for video {video_id}. Using video description instead.")
-        return None
+        return None  # Return None silently if transcript is not available
 
 # Function to get video comments
 def get_video_comments(video_id, max_results=10):
@@ -98,33 +97,47 @@ def generate_single_blog_post(video_id):
         transcript = get_video_transcript(video_id)
         comments = get_video_comments(video_id)
 
+        blog_sections = [f"# {video_title}", f"\nVideo URL: https://www.youtube.com/watch?v={video_id}"]
+
+        # Add video statistics
+        blog_sections.append(f"\nViews: {video_details['statistics']['viewCount']}")
+        blog_sections.append(f"Likes: {video_details['statistics']['likeCount']}")
+
+        # Generate content based on transcript or description
         if transcript:
-            content_for_summary = transcript
-            summary_prompt = "Summarize this video transcript in a blog post format:"
+            summary = process_with_openai(transcript, "Summarize this video transcript in a blog post format:")
+            blog_sections.append("\n## Video Summary (Based on Transcript)")
         else:
-            content_for_summary = f"Title: {video_title}\n\nDescription: {video_description}"
-            summary_prompt = "Based on this video title and description, generate a blog post summary:"
+            summary = process_with_openai(f"Title: {video_title}\n\nDescription: {video_description}", 
+                                          "Based on this video title and description, generate a blog post summary:")
+            blog_sections.append("\n## Video Summary (Based on Title and Description)")
+            blog_sections.append("\n*Note: This summary is generated based on the video title and description as the transcript was not available.*")
 
-        summary = process_with_openai(content_for_summary, summary_prompt)
-        enhanced_comments = process_with_openai('\n'.join(comments), "Highlight and analyze the most interesting points from these comments:")
+        blog_sections.append(summary)
 
-        if summary and enhanced_comments:
-            blog_post = f"""
-            # {video_title}
+        # Add key points or takeaways
+        key_points = process_with_openai(summary, "Extract 3-5 key points or takeaways from this summary:")
+        blog_sections.append("\n## Key Takeaways")
+        blog_sections.append(key_points)
 
-            Video URL: https://www.youtube.com/watch?v={video_id}
-            Views: {video_details['statistics']['viewCount']}
-            Likes: {video_details['statistics']['likeCount']}
+        # Add comment analysis if comments are available
+        if comments:
+            enhanced_comments = process_with_openai('\n'.join(comments), "Highlight and analyze the most interesting points from these comments:")
+            blog_sections.append("\n## Community Insights")
+            blog_sections.append(enhanced_comments)
+        else:
+            blog_sections.append("\n## Community Insights")
+            blog_sections.append("*No comments available for this video.*")
 
-            ## Summary
-            {summary}
+        # Conclude the blog post
+        conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", 
+                                         "Write a brief conclusion for this blog post, encouraging viewers to watch the video:")
+        blog_sections.append("\n## Conclusion")
+        blog_sections.append(conclusion)
 
-            ## Highlighted Comments Analysis
-            {enhanced_comments}
-            """
-
-            store_in_pinecone(video_id, blog_post)
-            return blog_post
+        blog_post = '\n'.join(blog_sections)
+        store_in_pinecone(video_id, blog_post)
+        return blog_post
     
     return None
 
