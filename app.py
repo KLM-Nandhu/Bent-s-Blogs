@@ -45,7 +45,7 @@ def get_video_transcript(video_id):
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return ' '.join([entry['text'] for entry in transcript])
     except Exception as e:
-        st.error(f"Error fetching transcript: {str(e)}")
+        st.warning(f"Transcript not available for video {video_id}. Using video description instead.")
         return None
 
 # Function to get video comments
@@ -107,33 +107,40 @@ def generate_blog_posts(channel_id):
         for item in response['items']:
             video_id = item['id']['videoId']
             video_title = item['snippet']['title']
+            video_description = item['snippet']['description']
 
             video_details = get_video_details(video_id)
             if video_details:
                 transcript = get_video_transcript(video_id)
                 comments = get_video_comments(video_id)
 
-                if transcript and comments:
-                    summary = process_with_openai(transcript, "Summarize this video transcript in a blog post format:")
-                    enhanced_comments = process_with_openai('\n'.join(comments), "Highlight and analyze the most interesting points from these comments:")
+                if transcript:
+                    content_for_summary = transcript
+                    summary_prompt = "Summarize this video transcript in a blog post format:"
+                else:
+                    content_for_summary = f"Title: {video_title}\n\nDescription: {video_description}"
+                    summary_prompt = "Based on this video title and description, generate a blog post summary:"
 
-                    if summary and enhanced_comments:
-                        blog_post = f"""
-                        # {video_title}
+                summary = process_with_openai(content_for_summary, summary_prompt)
+                enhanced_comments = process_with_openai('\n'.join(comments), "Highlight and analyze the most interesting points from these comments:")
 
-                        Video URL: https://www.youtube.com/watch?v={video_id}
-                        Views: {video_details['statistics']['viewCount']}
-                        Likes: {video_details['statistics']['likeCount']}
+                if summary and enhanced_comments:
+                    blog_post = f"""
+                    # {video_title}
 
-                        ## Summary
-                        {summary}
+                    Video URL: https://www.youtube.com/watch?v={video_id}
+                    Views: {video_details['statistics']['viewCount']}
+                    Likes: {video_details['statistics']['likeCount']}
 
-                        ## Highlighted Comments Analysis
-                        {enhanced_comments}
-                        """
+                    ## Summary
+                    {summary}
 
-                        blog_posts.append((video_id, blog_post))
-                        store_in_pinecone(video_id, blog_post)
+                    ## Highlighted Comments Analysis
+                    {enhanced_comments}
+                    """
+
+                    blog_posts.append((video_id, blog_post))
+                    store_in_pinecone(video_id, blog_post)
 
         return blog_posts
     except HttpError as e:
