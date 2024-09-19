@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import googleapiclient.discovery
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
-from pinecone import Pinecone, ServerlessSpec
+import pinecone
 
 # Load environment variables
 load_dotenv()
@@ -12,27 +12,23 @@ load_dotenv()
 # Initialize OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialize Pinecone (Serverless)
+# Initialize Pinecone
 try:
-    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1")
     index_name = "youtube-blog-index"
     
     # Check if index exists, if not, create it
-    if index_name not in pc.list_indexes().names():
-        pc.create_index(
+    if index_name not in pinecone.list_indexes():
+        pinecone.create_index(
             name=index_name,
             dimension=1536,  # OpenAI embeddings are 1536 dimensions
-            metric="cosine",
-            spec=ServerlessSpec(
-                cloud="aws",
-                region="us-west-2"
-            )
+            metric="cosine"
         )
     
-    index = pc.Index(index_name)
+    index = pinecone.Index(index_name)
 except Exception as e:
     st.error(f"Failed to initialize Pinecone: {str(e)}")
-    st.error("Please ensure your Pinecone API key is correct and you have permission to create/access indexes.")
+    st.error("Please ensure your Pinecone API key is correct and you have permission to create/access indexes in us-east-1.")
     index = None
 
 # Function to get video details
@@ -64,7 +60,7 @@ def get_video_comments(api_key, video_id, max_results=10):
 # Function to process content with OpenAI
 def process_with_openai(content, prompt):
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": content}
