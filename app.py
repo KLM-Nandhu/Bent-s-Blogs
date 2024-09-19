@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import googleapiclient.discovery
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
-import pinecone
+from pinecone import Pinecone, ServerlessSpec
 
 # Load environment variables
 load_dotenv()
@@ -13,11 +13,27 @@ load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize Pinecone (Serverless)
-pinecone.init(api_key=os.getenv("PINECONE_API_KEY"))
-index_name = "youtube-blog-index"
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(index_name, dimension=1536)  # OpenAI embeddings are 1536 dimensions
-index = pinecone.Index(index_name)
+try:
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+    index_name = "youtube-blog-index"
+    
+    # Check if index exists, if not, create it
+    if index_name not in pc.list_indexes().names():
+        pc.create_index(
+            name=index_name,
+            dimension=1536,  # OpenAI embeddings are 1536 dimensions
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud="aws",
+                region="us-west-2"
+            )
+        )
+    
+    index = pc.Index(index_name)
+except Exception as e:
+    st.error(f"Failed to initialize Pinecone: {str(e)}")
+    st.error("Please ensure your Pinecone API key is correct and you have permission to create/access indexes.")
+    index = None
 
 # Function to get video details
 def get_video_details(api_key, video_id):
@@ -48,7 +64,7 @@ def get_video_comments(api_key, video_id, max_results=10):
 # Function to process content with OpenAI
 def process_with_openai(content, prompt):
     response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": content}
@@ -58,14 +74,26 @@ def process_with_openai(content, prompt):
 
 # Function to store data in Pinecone
 def store_in_pinecone(video_id, blog_content):
-    vector = openai.Embedding.create(input=[blog_content], model="text-embedding-ada-002")["data"][0]["embedding"]
-    index.upsert([(video_id, vector, {"blog_content": blog_content})])
+    if index is None:
+        st.warning("Pinecone index is not available. Blog post will not be stored.")
+        return
+    try:
+        vector = openai.Embedding.create(input=[blog_content], model="text-embedding-ada-002")["data"][0]["embedding"]
+        index.upsert(vectors=[(video_id, vector, {"blog_content": blog_content})])
+    except Exception as e:
+        st.error(f"Failed to store blog post in Pinecone: {str(e)}")
 
 # Function to retrieve data from Pinecone
 def retrieve_from_pinecone(video_id):
-    result = index.fetch([video_id])
-    if result and video_id in result['vectors']:
-        return result['vectors'][video_id]['metadata']['blog_content']
+    if index is None:
+        st.warning("Pinecone index is not available. Cannot retrieve blog post.")
+        return None
+    try:
+        result = index.fetch(ids=[video_id])
+        if result and video_id in result['vectors']:
+            return result['vectors'][video_id]['metadata']['blog_content']
+    except Exception as e:
+        st.error(f"Failed to retrieve blog post from Pinecone: {str(e)}")
     return None
 
 # Streamlit app
