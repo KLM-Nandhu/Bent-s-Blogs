@@ -14,7 +14,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize Pinecone
 try:
-    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1")
+    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1-aws")
     index_name = "youtube-blog-index"
     
     # Check if index exists, if not, create it
