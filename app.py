@@ -13,21 +13,6 @@ load_dotenv()
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Try to import Pinecone, but continue if it's not available
-try:
-    import pinecone
-    pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-east-1")
-    index_name = "youtube-blog-index"
-    index = pinecone.Index(index_name)
-    st.success("Connected to Pinecone database successfully.")
-    use_pinecone = True
-except ImportError:
-    st.warning("Pinecone library not found. Running without vector database functionality.")
-    use_pinecone = False
-except Exception as e:
-    st.error(f"Failed to connect to Pinecone: {str(e)}")
-    use_pinecone = False
-
 # Function to get video details
 def get_video_details(video_id):
     try:
@@ -66,7 +51,7 @@ def get_video_comments(video_id, max_results=10):
 def process_with_openai(content, prompt):
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content}
@@ -76,17 +61,6 @@ def process_with_openai(content, prompt):
     except Exception as e:
         st.error(f"Error processing with OpenAI: {str(e)}")
         return None
-
-# Function to store data in Pinecone (if available)
-def store_in_pinecone(video_id, blog_content):
-    if not use_pinecone:
-        return
-    try:
-        vector = openai.Embedding.create(input=[blog_content], model="text-embedding-ada-002")["data"][0]["embedding"]
-        index.upsert(vectors=[(video_id, vector, {"blog_content": blog_content})])
-        st.success(f"Blog post for video {video_id} stored in Pinecone successfully.")
-    except Exception as e:
-        st.error(f"Failed to store blog post in Pinecone: {str(e)}")
 
 # Function to generate a blog post for a single video
 def generate_single_blog_post(video_id):
@@ -135,9 +109,7 @@ def generate_single_blog_post(video_id):
         blog_sections.append("\n## Conclusion")
         blog_sections.append(conclusion)
 
-        blog_post = '\n'.join(blog_sections)
-        store_in_pinecone(video_id, blog_post)
-        return blog_post
+        return '\n'.join(blog_sections)
     
     return None
 
