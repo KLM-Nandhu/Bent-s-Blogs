@@ -51,7 +51,7 @@ def get_video_comments(video_id, max_results=10):
 def process_with_openai(content, prompt):
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content}
