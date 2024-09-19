@@ -157,7 +157,7 @@ def generate_channel_blog_posts(channel_id):
 
 # Streamlit app
 def main():
-    st.title("Enhanced YouTube Blog Post Generator")
+    st.title("BENT'S - BLOG'S")
 
     # Set default YouTube Channel ID
     default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
