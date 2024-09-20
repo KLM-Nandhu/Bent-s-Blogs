@@ -6,7 +6,7 @@ from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
 import re
-import docx2txt
+import io
 
 # Load environment variables
 load_dotenv()
@@ -96,10 +96,10 @@ def generate_single_blog_post(video_id, uploaded_file=None):
         transcript = get_video_transcript(video_id)
         
         if not transcript and not uploaded_file:
-            st.warning("No transcript available. Please upload a document with the video content.")
-            uploaded_file = st.file_uploader("Upload a docx file with video content", type="docx")
+            st.warning("No transcript available. Please upload a text file with the video content.")
+            uploaded_file = st.file_uploader("Upload a text file with video content", type="txt")
             if uploaded_file:
-                transcript = docx2txt.process(uploaded_file)
+                transcript = uploaded_file.getvalue().decode("utf-8")
             else:
                 return None
 
