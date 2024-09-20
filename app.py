@@ -82,33 +82,6 @@ def extract_shopping_links(description):
     matches = re.findall(pattern, description)
     return matches
 
-def get_product_details(url):
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-        }
-        response = requests.get(url, headers=headers, allow_redirects=True)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        title = soup.find('h1')
-        title = title.text.strip() if title else 'Product Title Not Found'
-        
-        price = soup.find('span', string=re.compile(r'\$\d+'))
-        price = price.text.strip() if price else 'Price Not Found'
-        
-        image = soup.find('img', {'src': re.compile(r'.*\.(jpg|jpeg|png|gif)')})
-        image_url = image['src'] if image else None
-        
-        return {
-            'title': title,
-            'price': price,
-            'image_url': image_url,
-            'link': url
-        }
-    except Exception as e:
-        print(f"Error fetching product details: {str(e)}")
-        return None
-
 def generate_single_blog_post(video_id):
     video_details = get_video_details(video_id)
     if video_details:
@@ -134,11 +107,6 @@ def generate_single_blog_post(video_id):
             summary = process_with_openai(full_transcript, PROMPTS[1])
             blog_sections.append("\n## Video Summary (Based on Transcript)")
             blog_sections.append(summary)
-
-            products_prompt = "Based on this transcript, list only the specific products or tools that were actually used or demonstrated in the video. Do not include any generic or related products that weren't explicitly mentioned or shown:"
-            mentioned_products = process_with_openai(full_transcript, products_prompt)
-            blog_sections.append("\n## Products Used in the Video")
-            blog_sections.append(mentioned_products)
         else:
             summary = process_with_openai(f"Title: {video_title}\n\nDescription: {video_description}", PROMPTS[2])
             blog_sections.append("\n## Video Summary (Based on Title and Description)")
@@ -148,19 +116,6 @@ def generate_single_blog_post(video_id):
         key_points = process_with_openai(summary, PROMPTS[3])
         blog_sections.append("\n## Key Takeaways")
         blog_sections.append(key_points)
-
-        if shopping_links:
-            blog_sections.append("\n## Products Featured (with Purchase Links)")
-            for product_name, link in shopping_links:
-                blog_sections.append(f"\n### [{product_name}]({link})")
-                product_details = get_product_details(link)
-                if product_details:
-                    blog_sections.append(f"Price: {product_details['price']}")
-                    if product_details['image_url']:
-                        blog_sections.append(f"![Product Image]({product_details['image_url']})")
-        else:
-            blog_sections.append("\n## Products Featured")
-            blog_sections.append("*No product links found in the video description.*")
 
         if comments:
             comment_texts = [comment['textDisplay'] for comment in comments]
@@ -179,6 +134,25 @@ def generate_single_blog_post(video_id):
         conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", PROMPTS[5])
         blog_sections.append("\n## Conclusion")
         blog_sections.append(conclusion)
+
+        # Add product links at the end
+        if shopping_links:
+            blog_sections.append("\n## Links to Products Mentioned")
+            for product_name, link in shopping_links:
+                blog_sections.append(f"{product_name}: {link}")
+
+        # Add sponsorship and social media sections
+        blog_sections.append("\n## Sponsored By:")
+        # Add sponsored links here if available
+
+        blog_sections.append("\n## Partnered With:")
+        # Add partner links here if available
+
+        blog_sections.append("\n## Affiliate For:")
+        # Add affiliate links here if available
+
+        blog_sections.append("\n## Find me on social media!")
+        # Add social media links here if available
 
         return '\n'.join(blog_sections)
     
