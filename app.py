@@ -8,6 +8,7 @@ import openai
 import re
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 # Load environment variables
 load_dotenv()
@@ -17,14 +18,13 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 PROMPTS = {
-    1: "Analyze this woodworking video transcript and create a detailed blog post. Focus on the specific techniques, tools used, and key steps in the project. Highlight any unique or innovative approaches:",
-    2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the woodworking process:",
-    3: "Extract 5-7 key learning points or tips from this woodworking video that would be valuable for both beginners and experienced woodworkers. Emphasize safety tips and best practices:",
-    4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar woodworking projects. Include a brief explanation of how each product could be beneficial:",
-    5: "Craft a compelling conclusion for this woodworking blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this woodworking technique:"
+    1: "Analyze this video transcript and create a detailed blog post. Focus on the specific techniques, tools used, and key steps in the project. Highlight any unique or innovative approaches:",
+    2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the process:",
+    3: "Extract 5-7 key learning points or tips from this video that would be valuable for both beginners and experienced viewers. Emphasize safety tips and best practices:",
+    4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar projects. Include a brief explanation of how each product could be beneficial:",
+    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:"
 }
 
-# Function to get video details
 def get_video_details(video_id):
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
@@ -35,7 +35,6 @@ def get_video_details(video_id):
         st.error(f"An error occurred while fetching video details: {e}")
         return None
 
-# Function to get video transcript
 def get_video_transcript(video_id):
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
@@ -43,7 +42,6 @@ def get_video_transcript(video_id):
     except Exception as e:
         return None
 
-# Function to get video comments
 def get_video_comments(video_id, max_results=20):
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
@@ -59,7 +57,6 @@ def get_video_comments(video_id, max_results=20):
         st.error(f"An error occurred while fetching comments: {e}")
         return []
 
-# Function to process content with OpenAI
 def process_with_openai(content, prompt):
     try:
         response = openai.ChatCompletion.create(
@@ -74,30 +71,33 @@ def process_with_openai(content, prompt):
         st.error(f"Error processing with OpenAI: {str(e)}")
         return None
 
-# Function to extract chapters from video description
 def extract_chapters(description):
     chapter_pattern = r'(\d+:\d+)\s+(.+)'
     chapters = re.findall(chapter_pattern, description)
     return chapters
 
-# Modified function to extract shopping links from video description
 def extract_shopping_links(description):
-    link_pattern = r'(https?://(?:www\.)?(?:amazon|flipkart)\.com\S+)'
-    links = re.findall(link_pattern, description)
-    return links
+    # This regex pattern looks for product names followed by URLs
+    pattern = r'(.*?)\s*-\s*(https?://\S+)'
+    matches = re.findall(pattern, description)
+    return matches
 
-# New function to get product details from Amazon link
 def get_product_details(url):
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
         }
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, allow_redirects=True)
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        title = soup.find('span', {'id': 'productTitle'}).text.strip() if soup.find('span', {'id': 'productTitle'}) else 'Product Title Not Found'
-        price = soup.find('span', {'class': 'a-price-whole'}).text.strip() if soup.find('span', {'class': 'a-price-whole'}) else 'Price Not Found'
-        image_url = soup.find('img', {'id': 'landingImage'})['src'] if soup.find('img', {'id': 'landingImage'}) else None
+        title = soup.find('h1')
+        title = title.text.strip() if title else 'Product Title Not Found'
+        
+        price = soup.find('span', string=re.compile(r'\$\d+'))
+        price = price.text.strip() if price else 'Price Not Found'
+        
+        image = soup.find('img', {'src': re.compile(r'.*\.(jpg|jpeg|png|gif)')})
+        image_url = image['src'] if image else None
         
         return {
             'title': title,
@@ -109,7 +109,6 @@ def get_product_details(url):
         print(f"Error fetching product details: {str(e)}")
         return None
 
-# Modified function to generate a blog post for a single video
 def generate_single_blog_post(video_id):
     video_details = get_video_details(video_id)
     if video_details:
@@ -122,73 +121,61 @@ def generate_single_blog_post(video_id):
 
         blog_sections = [f"# {video_title}", f"\nVideo URL: https://www.youtube.com/watch?v={video_id}"]
 
-        # Add video statistics
         blog_sections.append(f"\nViews: {video_details['statistics']['viewCount']}")
         blog_sections.append(f"Likes: {video_details['statistics']['likeCount']}")
 
-        # Add chapters
         if chapters:
             blog_sections.append("\n## Video Chapters")
             for time, title in chapters:
                 blog_sections.append(f"- {time}: {title}")
 
-        # Generate content based on transcript or description
         if transcript:
             full_transcript = ' '.join([entry['text'] for entry in transcript])
             summary = process_with_openai(full_transcript, PROMPTS[1])
             blog_sections.append("\n## Video Summary (Based on Transcript)")
             blog_sections.append(summary)
 
-            # Extract products mentioned in the transcript
             products_prompt = "Based on this transcript, list only the specific products or tools that were actually used or demonstrated in the video. Do not include any generic or related products that weren't explicitly mentioned or shown:"
             mentioned_products = process_with_openai(full_transcript, products_prompt)
             blog_sections.append("\n## Products Used in the Video")
             blog_sections.append(mentioned_products)
-
         else:
             summary = process_with_openai(f"Title: {video_title}\n\nDescription: {video_description}", PROMPTS[2])
             blog_sections.append("\n## Video Summary (Based on Title and Description)")
             blog_sections.append("\n*Note: This summary is generated based on the video title and description as the transcript was not available.*")
             blog_sections.append(summary)
 
-        # Add key points or takeaways
         key_points = process_with_openai(summary, PROMPTS[3])
         blog_sections.append("\n## Key Takeaways")
         blog_sections.append(key_points)
 
-        # Add shopping links with product details
         if shopping_links:
             blog_sections.append("\n## Products Featured (with Purchase Links)")
-            for link in shopping_links:
+            for product_name, link in shopping_links:
+                blog_sections.append(f"\n### [{product_name}]({link})")
                 product_details = get_product_details(link)
                 if product_details:
-                    blog_sections.append(f"\n### [{product_details['title']}]({link})")
                     blog_sections.append(f"Price: {product_details['price']}")
                     if product_details['image_url']:
                         blog_sections.append(f"![Product Image]({product_details['image_url']})")
-                else:
-                    blog_sections.append(f"\n- [Product Link]({link})")
         else:
             blog_sections.append("\n## Products Featured")
             blog_sections.append("*No product links found in the video description.*")
 
-        # Add comment analysis if comments are available
         if comments:
             comment_texts = [comment['textDisplay'] for comment in comments]
             enhanced_comments = process_with_openai('\n'.join(comment_texts), PROMPTS[4])
             blog_sections.append("\n## Community Insights")
             blog_sections.append(enhanced_comments)
 
-            # Add highlighted comments
             blog_sections.append("\n### Highlighted Comments")
-            for comment in comments[:5]:  # Display top 5 comments
+            for comment in comments[:5]:
                 blog_sections.append(f"\n> {comment['textDisplay']}")
                 blog_sections.append(f"\n— {comment['authorDisplayName']}")
         else:
             blog_sections.append("\n## Community Insights")
             blog_sections.append("*No comments available for this video.*")
 
-        # Conclude the blog post
         conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", PROMPTS[5])
         blog_sections.append("\n## Conclusion")
         blog_sections.append(conclusion)
@@ -197,7 +184,6 @@ def generate_single_blog_post(video_id):
     
     return None
 
-# Function to generate blog posts for a channel
 def generate_channel_blog_posts(channel_id):
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
@@ -222,16 +208,7 @@ def generate_channel_blog_posts(channel_id):
     except HttpError as e:
         error_details = e.error_details[0] if e.error_details else {}
         if error_details.get('reason') == 'accessNotConfigured':
-            st.error("YouTube Data API v3 is not enabled for your project. Please follow these steps:")
-            st.markdown("""
-            1. Go to https://console.developers.google.com/
-            2. Select your project from the top dropdown menu.
-            3. In the left sidebar, click on "APIs & Services" > "Library"
-            4. Search for "YouTube Data API v3"
-            5. Click on the API and then click "Enable"
-            6. Wait a few minutes for the changes to propagate.
-            7. Try again.
-            """)
+            st.error("YouTube Data API v3 is not enabled for your project. Please enable it in the Google Developers Console.")
         else:
             st.error(f"An error occurred while accessing the YouTube API: {str(e)}")
         return []
@@ -239,15 +216,12 @@ def generate_channel_blog_posts(channel_id):
         st.error(f"An unexpected error occurred: {str(e)}")
         return []
 
-# Streamlit app
 def main():
-    st.title("Enhanced YouTube Blog Generator with Product Focus")
+    st.title("Flexible YouTube Blog Generator")
 
-    # Set default YouTube Channel ID
     default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
     channel_id = st.text_input("Enter your YouTube Channel ID", value=default_channel_id)
 
-    # Add input for single video ID
     video_id = st.text_input("Or enter a specific YouTube Video ID (optional)")
 
     if st.button("Generate Blog Post(s)"):
