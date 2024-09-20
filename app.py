@@ -139,20 +139,46 @@ def generate_single_blog_post(video_id):
         if shopping_links:
             blog_sections.append("\n## Links to Products Mentioned")
             for product_name, link in shopping_links:
-                blog_sections.append(f"{product_name}: {link}")
+                blog_sections.append(f"- **{product_name}**: {link}")
 
-        # Add sponsorship and social media sections
+        # Extract and add sponsorship, partnership, affiliate, and social media information
+        sponsor_pattern = r"Sponsored By:(.+?)(?:\n\n|\Z)"
+        partner_pattern = r"Partnered With:(.+?)(?:\n\n|\Z)"
+        affiliate_pattern = r"Affiliate For:(.+?)(?:\n\n|\Z)"
+        social_pattern = r"Find me on social media!(.+?)(?:\n\n|\Z)"
+
+        sponsors = re.findall(sponsor_pattern, video_description, re.DOTALL)
+        partners = re.findall(partner_pattern, video_description, re.DOTALL)
+        affiliates = re.findall(affiliate_pattern, video_description, re.DOTALL)
+        social_media = re.findall(social_pattern, video_description, re.DOTALL)
+
         blog_sections.append("\n## Sponsored By:")
-        # Add sponsored links here if available
+        if sponsors:
+            for sponsor in sponsors[0].strip().split('\n'):
+                blog_sections.append(f"- {sponsor.strip()}")
+        else:
+            blog_sections.append("*No sponsors mentioned*")
 
         blog_sections.append("\n## Partnered With:")
-        # Add partner links here if available
+        if partners:
+            for partner in partners[0].strip().split('\n'):
+                blog_sections.append(f"- {partner.strip()}")
+        else:
+            blog_sections.append("*No partners mentioned*")
 
         blog_sections.append("\n## Affiliate For:")
-        # Add affiliate links here if available
+        if affiliates:
+            for affiliate in affiliates[0].strip().split('\n'):
+                blog_sections.append(f"- {affiliate.strip()}")
+        else:
+            blog_sections.append("*No affiliates mentioned*")
 
         blog_sections.append("\n## Find me on social media!")
-        # Add social media links here if available
+        if social_media:
+            for social in social_media[0].strip().split('\n'):
+                blog_sections.append(f"- {social.strip()}")
+        else:
+            blog_sections.append("*No social media links provided*")
 
         return '\n'.join(blog_sections)
     
