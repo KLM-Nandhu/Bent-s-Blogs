@@ -6,8 +6,6 @@ from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
 import re
-import requests
-from bs4 import BeautifulSoup
 
 # Load environment variables
 load_dotenv()
@@ -16,60 +14,16 @@ load_dotenv()
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Custom CSS for improved fonts and styling
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;700&family=Open+Sans:wght@400;600&display=swap');
-    
-    .title {
-        font-family: 'Roboto Slab', serif;
-        font-weight: 700;
-        color: #3d2b1f;
-        font-size: 2.5em;
-    }
-    .subtitle {
-        font-family: 'Roboto Slab', serif;
-        font-weight: 400;
-        color: #5d4037;
-        font-size: 1.8em;
-    }
-    .text {
-        font-family: 'Open Sans', sans-serif;
-        font-weight: 400;
-        color: #3e2723;
-        font-size: 1em;
-    }
-    .product-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 20px;
-    }
-    .product-card {
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 10px;
-        text-align: center;
-    }
-    .product-image {
-        max-width: 100%;
-        height: auto;
-        border-radius: 4px;
-    }
-    .stButton>button {
-        background-color: #8d6e63;
-        color: white;
-        font-family: 'Open Sans', sans-serif;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
 PROMPTS = {
     1: "Analyze this woodworking video transcript and create a detailed blog post. Focus on the specific techniques, tools used, and key steps in the project. Highlight any unique or innovative approaches:",
     2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the woodworking process:",
     3: "Extract 5-7 key learning points or tips from this woodworking video that would be valuable for both beginners and experienced woodworkers. Emphasize safety tips and best practices:",
-    4: "Craft a compelling conclusion for this woodworking blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this woodworking technique:"
+    4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar woodworking projects. Include a brief explanation of how each product could be beneficial:",
+    5: "Craft a compelling conclusion for this woodworking blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this woodworking technique:"
 }
 
+
+# Function to get video details
 def get_video_details(video_id):
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
@@ -80,14 +34,31 @@ def get_video_details(video_id):
         st.error(f"An error occurred while fetching video details: {e}")
         return None
 
+# Function to get video transcript
 def get_video_transcript(video_id):
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return ' '.join([entry['text'] for entry in transcript])
+        return transcript
     except Exception as e:
-        st.warning(f"Unable to fetch transcript: {e}")
         return None
 
+# Function to get video comments
+def get_video_comments(video_id, max_results=20):
+    try:
+        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        request = youtube.commentThreads().list(
+            part="snippet",
+            videoId=video_id,
+            maxResults=max_results,
+            order="relevance"
+        )
+        response = request.execute()
+        return [item['snippet']['topLevelComment']['snippet'] for item in response['items']]
+    except HttpError as e:
+        st.error(f"An error occurred while fetching comments: {e}")
+        return []
+
+# Function to process content with OpenAI
 def process_with_openai(content, prompt_number):
     try:
         response = openai.ChatCompletion.create(
@@ -102,113 +73,168 @@ def process_with_openai(content, prompt_number):
         st.error(f"Error processing with OpenAI: {str(e)}")
         return None
 
-def extract_product_links(description):
-    link_pattern = r'(https?://(?:www\.)?(?:amazon|homedepot|lowes|rockler|woodcraft)\.com\S+)'
+# Function to extract chapters from video description
+def extract_chapters(description):
+    chapter_pattern = r'(\d+:\d+)\s+(.+)'
+    chapters = re.findall(chapter_pattern, description)
+    return chapters
+
+# Function to extract shopping links from video description
+def extract_shopping_links(description):
+    link_pattern = r'(https?://(?:www\.)?(?:amazon|flipkart)\.com\S+)'
     links = re.findall(link_pattern, description)
     return links
 
-def get_product_details(url):
-    try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        title = soup.find('meta', property='og:title')['content'] if soup.find('meta', property='og:title') else 'Product Title Not Found'
-        image = soup.find('meta', property='og:image')['content'] if soup.find('meta', property='og:image') else 'https://via.placeholder.com/150'
-        return {'title': title, 'image': image, 'url': url}
-    except Exception as e:
-        st.warning(f"Error fetching product details: {e}")
-        return {'title': 'Product Info Unavailable', 'image': 'https://via.placeholder.com/150', 'url': url}
-
+# Function to generate a blog post for a single video
 def generate_single_blog_post(video_id):
     video_details = get_video_details(video_id)
-    if not video_details:
-        return None
+    if video_details:
+        video_title = video_details['snippet']['title']
+        video_description = video_details['snippet']['description']
+        transcript = get_video_transcript(video_id)
+        comments = get_video_comments(video_id)
+        chapters = extract_chapters(video_description)
+        shopping_links = extract_shopping_links(video_description)
 
-    video_title = video_details['snippet']['title']
-    video_description = video_details['snippet']['description']
-    transcript = get_video_transcript(video_id)
+        blog_sections = [f"# {video_title}", f"\nVideo URL: https://www.youtube.com/watch?v={video_id}"]
 
-    if not transcript:
-        st.warning("Transcript not available. The blog post may lack detailed information.")
-        content_for_analysis = f"Title: {video_title}\n\nDescription: {video_description}"
-    else:
-        content_for_analysis = transcript
+        # Add video statistics
+        blog_sections.append(f"\nViews: {video_details['statistics']['viewCount']}")
+        blog_sections.append(f"Likes: {video_details['statistics']['likeCount']}")
 
-    blog_sections = [f"<h1 class='title'>{video_title}</h1>", f"<p class='text'>Video URL: https://www.youtube.com/watch?v={video_id}</p>"]
+        # Add chapters
+        if chapters:
+            blog_sections.append("\n## Video Chapters")
+            for time, title in chapters:
+                blog_sections.append(f"- {time}: {title}")
 
-    # Add video statistics
-    blog_sections.append(f"<p class='text'>Views: {video_details['statistics']['viewCount']}</p>")
-    blog_sections.append(f"<p class='text'>Likes: {video_details['statistics']['likeCount']}</p>")
+        # Generate content based on transcript or description
+        if transcript:
+            full_transcript = ' '.join([entry['text'] for entry in transcript])
+            summary = process_with_openai(full_transcript, 1)
+            blog_sections.append("\n## Video Summary (Based on Transcript)")
+        else:
+            summary = process_with_openai(f"Title: {video_title}\n\nDescription: {video_description}", 2)
+            blog_sections.append("\n## Video Summary (Based on Title and Description)")
+            blog_sections.append("\n*Note: This summary is generated based on the video title and description as the transcript was not available.*")
 
-    # Generate content based on transcript or title/description
-    summary = process_with_openai(content_for_analysis, 1)
-    blog_sections.append("<h2 class='subtitle'>Video Summary</h2>")
-    blog_sections.append(f"<p class='text'>{summary}</p>")
+        blog_sections.append(summary)
 
-    # Add tools and materials
-    tools_and_materials = process_with_openai(content_for_analysis, 2)
-    blog_sections.append("<h2 class='subtitle'>Tools and Materials</h2>")
-    blog_sections.append(f"<p class='text'>{tools_and_materials}</p>")
+        # Add key points or takeaways
+        key_points = process_with_openai(summary, 3)
+        blog_sections.append("\n## Key Takeaways")
+        blog_sections.append(key_points)
 
-    # Add key points or takeaways
-    key_points = process_with_openai(content_for_analysis, 3)
-    blog_sections.append("<h2 class='subtitle'>Key Takeaways</h2>")
-    blog_sections.append(f"<p class='text'>{key_points}</p>")
+        # Add shopping links
+        if shopping_links:
+            blog_sections.append("\n## Tools and Products")
+            blog_sections.append("Here are the tools and products mentioned in the video:")
+            for link in shopping_links:
+                blog_sections.append(f"- [Product Link]({link})")
 
-    # Extract and display product links
-    product_links = extract_product_links(video_description)
-    if product_links:
-        blog_sections.append("<h2 class='subtitle'>Products Used in This Video</h2>")
-        blog_sections.append("<div class='product-grid'>")
-        for link in product_links:
-            product = get_product_details(link)
-            blog_sections.append(f"""
-                <div class='product-card'>
-                    <img src="{product['image']}" alt="{product['title']}" class='product-image'>
-                    <p class='text'>{product['title']}</p>
-                    <a href="{product['url']}" target="_blank" class='text'>Buy Now</a>
-                </div>
+        # Add comment analysis if comments are available
+        if comments:
+            comment_texts = [comment['textDisplay'] for comment in comments]
+            enhanced_comments = process_with_openai('\n'.join(comment_texts), 4)
+            blog_sections.append("\n## Community Insights")
+            blog_sections.append(enhanced_comments)
+
+            # Add highlighted comments
+            blog_sections.append("\n### Highlighted Comments")
+            for comment in comments[:5]:  # Display top 5 comments
+                blog_sections.append(f"\n> {comment['textDisplay']}")
+                blog_sections.append(f"\n— {comment['authorDisplayName']}")
+        else:
+            blog_sections.append("\n## Community Insights")
+            blog_sections.append("*No comments available for this video.*")
+
+        # Conclude the blog post
+        conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", 5)
+        blog_sections.append("\n## Conclusion")
+        blog_sections.append(conclusion)
+
+        return '\n'.join(blog_sections)
+    
+    return None
+
+# Function to generate blog posts for a channel
+def generate_channel_blog_posts(channel_id):
+    try:
+        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        request = youtube.search().list(
+            part="snippet",
+            channelId=channel_id,
+            type="video",
+            order="date",
+            maxResults=50
+        )
+        response = request.execute()
+
+        blog_posts = []
+
+        for item in response['items']:
+            video_id = item['id']['videoId']
+            blog_post = generate_single_blog_post(video_id)
+            if blog_post:
+                blog_posts.append((video_id, blog_post))
+
+        return blog_posts
+    except HttpError as e:
+        error_details = e.error_details[0] if e.error_details else {}
+        if error_details.get('reason') == 'accessNotConfigured':
+            st.error("YouTube Data API v3 is not enabled for your project. Please follow these steps:")
+            st.markdown("""
+            1. Go to https://console.developers.google.com/
+            2. Select your project from the top dropdown menu.
+            3. In the left sidebar, click on "APIs & Services" > "Library"
+            4. Search for "YouTube Data API v3"
+            5. Click on the API and then click "Enable"
+            6. Wait a few minutes for the changes to propagate.
+            7. Try again.
             """)
-        blog_sections.append("</div>")
+        else:
+            st.error(f"An error occurred while accessing the YouTube API: {str(e)}")
+        return []
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        return []
 
-    # Conclude the blog post
-    conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", 4)
-    blog_sections.append("<h2 class='subtitle'>Conclusion</h2>")
-    blog_sections.append(f"<p class='text'>{conclusion}</p>")
-
-    return '\n'.join(blog_sections)
-
+# Streamlit app
 def main():
-    st.markdown("<h1 class='title'>Woodworking YouTube Blog Generator</h1>", unsafe_allow_html=True)
+    st.title("Enhanced YouTube Blog Generator")
 
-    video_id = st.text_input("Enter a YouTube Video ID")
+    # Set default YouTube Channel ID
+    default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
+    channel_id = st.text_input("Enter your YouTube Channel ID", value=default_channel_id)
 
-    if st.button("Generate Blog Post"):
+    # Add input for single video ID
+    video_id = st.text_input("Or enter a specific YouTube Video ID (optional)")
+
+    if st.button("Generate Blog Post(s)"):
         if video_id:
-            with st.spinner("Crafting your woodworking blog post... 🪚"):
-                st.markdown("""
-                    <style>
-                        @keyframes saw {
-                            0% { content: "🪚"; }
-                            25% { content: "🪚 "; }
-                            50% { content: "🪚  "; }
-                            75% { content: "🪚   "; }
-                            100% { content: "🪚    "; }
-                        }
-                        .saw-animation::after {
-                            content: "🪚";
-                            animation: saw 1s infinite;
-                        }
-                    </style>
-                    <div class="saw-animation">Crafting your woodworking blog post</div>
-                    """, unsafe_allow_html=True)
+            with st.spinner("Generating enhanced blog post... This may take a while."):
                 blog_post = generate_single_blog_post(video_id)
             if blog_post:
-                st.success("Blog post generated successfully!")
-                st.markdown(blog_post, unsafe_allow_html=True)
+                st.success("Enhanced blog post generated successfully!")
+                st.markdown(blog_post)
             else:
                 st.warning("Failed to generate blog post. Please check the video ID and try again.")
+        elif channel_id:
+            with st.spinner("Generating enhanced blog posts... This may take a while."):
+                blog_posts = generate_channel_blog_posts(channel_id)
+            
+            if blog_posts:
+                st.success(f"Generated {len(blog_posts)} enhanced blog posts!")
+                for video_id, post in blog_posts:
+                    with st.expander(f"Blog Post for Video {video_id}"):
+                        st.markdown(post)
+            else:
+                st.warning("No blog posts were generated. Please check the error messages above and try again.")
         else:
-            st.error("Please enter a YouTube Video ID.")
+            st.error("Please enter either a YouTube Channel ID or a specific Video ID.")
+
+        if st.button("Generate Another"):
+            st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
