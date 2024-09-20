@@ -70,7 +70,7 @@ def get_video_transcript(video_id):
 def process_with_openai(content, prompt_number):
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": f"Prompt {prompt_number}: {PROMPTS[prompt_number]}"},
                 {"role": "user", "content": content}
