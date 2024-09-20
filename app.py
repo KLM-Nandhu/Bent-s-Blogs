@@ -22,8 +22,7 @@ PROMPTS = {
     2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the process:",
     3: "Extract 5-7 key learning points or tips from this video that would be valuable for both beginners and experienced viewers. Emphasize safety tips and best practices:",
     4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar projects. Include a brief explanation of how each product could be beneficial:",
-    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:",
-    6: "Based on the video content and description, suggest ways for viewers to connect with the content creator on social media. Include specific platform recommendations and explain how following the creator could benefit the viewers:"
+    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:"
 }
 
 def get_video_details(video_id):
@@ -86,9 +85,8 @@ def extract_social_media_links(description):
     social_pattern = r'(?:Find me on social media!|Follow me on:)(.+?)(?:\n\n|\Z)'
     social_media = re.findall(social_pattern, description, re.DOTALL)
     if social_media:
-        links = re.findall(r'((?:https?://)?(?:www\.)?(?:(?:facebook|twitter|instagram|youtube)\.com|youtu\.be)/\S+)', social_media[0])
-        return links
-    return []
+        return social_media[0].strip()
+    return None
 
 def generate_single_blog_post(video_id):
     video_details = get_video_details(video_id)
@@ -99,7 +97,7 @@ def generate_single_blog_post(video_id):
         comments = get_video_comments(video_id)
         chapters = extract_chapters(video_description)
         shopping_links = extract_shopping_links(video_description)
-        social_media_links = extract_social_media_links(video_description)
+        social_media_info = extract_social_media_links(video_description)
 
         blog_sections = [f"# {video_title}", f"\nVideo URL: https://www.youtube.com/watch?v={video_id}"]
 
@@ -179,12 +177,10 @@ def generate_single_blog_post(video_id):
             blog_sections.append("*No affiliates mentioned*")
 
         blog_sections.append("\n## Find me on social media!")
-        if social_media_links:
-            for link in social_media_links:
-                blog_sections.append(f"- {link}")
+        if social_media_info:
+            blog_sections.append(social_media_info)
         else:
-            social_media_suggestions = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", PROMPTS[6])
-            blog_sections.append(social_media_suggestions)
+            blog_sections.append("*No social media information provided*")
 
         return '\n'.join(blog_sections)
     
