@@ -22,8 +22,7 @@ PROMPTS = {
     2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the process:",
     3: "Extract 5-7 key learning points or tips from this video that would be valuable for both beginners and experienced viewers. Emphasize safety tips and best practices:",
     4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar projects. Include a brief explanation of how each product could be beneficial:",
-    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:",
-    6: "Extract all the data from the youtube description side provide me the Sponsored By , Partnered With , Affiliate For , Find me on social media!. "
+    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:"
 }
 
 def get_video_details(video_id):
