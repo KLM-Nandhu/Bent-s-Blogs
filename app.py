@@ -93,7 +93,7 @@ def extract_shopping_links(description):
     return links
 
 # Function to generate a blog post for a single video
-def generate_single_blog_post(video_id):
+def generate_single_blog_post(video_id, manual_transcript=None):
     video_details = get_video_details(video_id)
     if not video_details:
         st.error("Failed to fetch video details. Please check the video ID and try again.")
@@ -102,20 +102,19 @@ def generate_single_blog_post(video_id):
     video_title = video_details['snippet']['title']
     video_description = video_details['snippet']['description']
     
-    # First attempt to get transcript
-    transcript = get_video_transcript(video_id)
-    
-    # If first attempt fails, inform user and try again
-    if not transcript:
-        st.warning("Initial attempt to fetch transcript failed. Trying again...")
-        transcript = get_video_transcript(video_id, max_retries=2)
-    
-    # If still no transcript, ask for manual input
-    if not transcript:
-        st.warning("Unable to automatically fetch the transcript. Please enter the transcript manually.")
-        transcript = st.text_area("Enter the video transcript here:", height=300)
+    if manual_transcript:
+        transcript = manual_transcript
+    else:
+        # First attempt to get transcript
+        transcript = get_video_transcript(video_id)
+        
+        # If first attempt fails, inform user and try again
         if not transcript:
-            st.error("No transcript provided. Unable to generate blog post.")
+            st.warning("Initial attempt to fetch transcript failed. Trying again...")
+            transcript = get_video_transcript(video_id, max_retries=2)
+        
+        # If still no transcript, return None to trigger manual input
+        if not transcript:
             return None
 
     shopping_links = extract_shopping_links(video_description)
@@ -160,6 +159,30 @@ def generate_single_blog_post(video_id):
 
     return '\n'.join(blog_sections)
 
+# Improved loading animation
+def loading_animation():
+    col1, col2, col3 = st.columns([1,3,1])
+    with col2:
+        st.markdown("""
+            <style>
+                .stSpinner > div > div {
+                    border-top-color: #8d6e63 !important;
+                }
+                @keyframes saw {
+                    0% { content: "🪚"; }
+                    25% { content: "🪚 "; }
+                    50% { content: "🪚  "; }
+                    75% { content: "🪚   "; }
+                    100% { content: "🪚    "; }
+                }
+                .saw-animation::after {
+                    content: "🪚";
+                    animation: saw 1s infinite;
+                }
+            </style>
+            <div class="saw-animation">Crafting your woodworking blog post</div>
+            """, unsafe_allow_html=True)
+
 # Streamlit app
 def main():
     st.markdown("<h1 class='title'>Comprehensive Woodworking YouTube Blog Generator</h1>", unsafe_allow_html=True)
@@ -168,18 +191,26 @@ def main():
 
     if st.button("Generate Blog Post"):
         if video_id:
-            with st.spinner("Crafting your comprehensive woodworking blog post... 🪚"):
-                st.markdown("""
-                    <style>
-                        .stSpinner > div > div {
-                            border-top-color: #8d6e63 !important;
-                        }
-                    </style>
-                    """, unsafe_allow_html=True)
-                
+            with st.spinner():
+                loading_animation()
                 blog_post = generate_single_blog_post(video_id)
             
-            if blog_post:
+            if blog_post is None:
+                st.warning("Unable to automatically fetch the transcript. Please enter the transcript manually.")
+                manual_transcript = st.text_area("Enter the video transcript here:", height=300)
+                if st.button("Process Manual Transcript"):
+                    if manual_transcript:
+                        with st.spinner():
+                            loading_animation()
+                            blog_post = generate_single_blog_post(video_id, manual_transcript)
+                        if blog_post:
+                            st.success("Comprehensive woodworking blog post generated successfully!")
+                            st.markdown(blog_post, unsafe_allow_html=True)
+                        else:
+                            st.error("Failed to generate blog post from manual transcript. Please try again.")
+                    else:
+                        st.error("No transcript provided. Unable to generate blog post.")
+            elif blog_post:
                 st.success("Comprehensive woodworking blog post generated successfully!")
                 st.markdown(blog_post, unsafe_allow_html=True)
             else:
