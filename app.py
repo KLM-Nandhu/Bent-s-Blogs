@@ -77,14 +77,14 @@ def extract_chapters(description):
     return chapters
 
 def extract_shopping_links(description):
-    # Look for the section starting with "Links to tools" or similar
-    tools_section = re.search(r'Links to (?:tools|products).*?(?:\n\n|\Z)', description, re.DOTALL | re.IGNORECASE)
+    # This pattern looks for any line containing a URL
+    pattern = r'^(.*?(?::|-))\s*(https?://\S+)$'
+    matches = re.findall(pattern, description, re.MULTILINE)
     
-    if tools_section:
-        # Extract all product links from this section
-        links = re.findall(r'(.*?)\s*:\s*(https?://\S+)', tools_section.group(0))
-        return links
-    return []
+    # Clean up the matches
+    links = [(name.strip(' :-'), url.strip()) for name, url in matches if url.startswith('http')]
+    
+    return links
 
 def extract_social_media_links(description):
     social_pattern = r'(?:Find me on social media!|Follow me on:)(.+?)(?:\n\n|\Z)'
@@ -151,7 +151,7 @@ def generate_single_blog_post(video_id):
             blog_sections.append("\n## Links to Products Mentioned")
             blog_sections.append("As an Amazon Associate I earn from qualifying purchases.")
             for product_name, link in shopping_links:
-                blog_sections.append(f"- **{product_name.strip()}**: {link.strip()}")
+                blog_sections.append(f"- **{product_name}**: {link}")
         else:
             blog_sections.append("\n## Links to Products Mentioned")
             blog_sections.append("*No product links found in the video description.*")
