@@ -77,12 +77,19 @@ def extract_chapters(description):
     return chapters
 
 def extract_shopping_links(description):
-    # This pattern looks for any line containing a URL
-    pattern = r'^(.*?(?::|-))\s*(https?://\S+)$'
+    # This pattern looks for any line containing a URL, with or without a product name
+    pattern = r'^(.*?)(?::|-)?\s*(https?://\S+)'
     matches = re.findall(pattern, description, re.MULTILINE)
     
     # Clean up the matches
-    links = [(name.strip(' :-'), url.strip()) for name, url in matches if url.startswith('http')]
+    links = []
+    for name, url in matches:
+        name = name.strip(' :-')
+        url = url.strip()
+        if name and url.startswith('http'):
+            links.append((name, url))
+        elif url.startswith('http'):  # If no name, use the URL as the name
+            links.append((url, url))
     
     return links
 
@@ -151,7 +158,10 @@ def generate_single_blog_post(video_id):
             blog_sections.append("\n## Links to Products Mentioned")
             blog_sections.append("As an Amazon Associate I earn from qualifying purchases.")
             for product_name, link in shopping_links:
-                blog_sections.append(f"- **{product_name}**: {link}")
+                if product_name == link:
+                    blog_sections.append(f"- {link}")
+                else:
+                    blog_sections.append(f"- **{product_name}**: {link}")
         else:
             blog_sections.append("\n## Links to Products Mentioned")
             blog_sections.append("*No product links found in the video description.*")
