@@ -23,7 +23,7 @@ PROMPTS = {
     3: "Extract 5-7 key learning points or tips from this video that would be valuable for both beginners and experienced viewers. Emphasize safety tips and best practices:",
     4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar projects. Include a brief explanation of how each product could be beneficial:",
     5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:",
-    6: "Extract all the data from the youtube describtion side provide me the Sponsored By , Partnered With , Affiliate For , Find me on social media!.  "
+    6: "Extract all the data from the youtube description side provide me the Sponsored By , Partnered With , Affiliate For , Find me on social media!. "
 }
 
 def get_video_details(video_id):
@@ -78,9 +78,14 @@ def extract_chapters(description):
     return chapters
 
 def extract_shopping_links(description):
-    pattern = r'(.*?)\s*-\s*(https?://\S+)'
-    matches = re.findall(pattern, description)
-    return matches
+    # Look for the section starting with "Links to tools" or similar
+    tools_section = re.search(r'Links to (?:tools|products).*?(?:\n\n|\Z)', description, re.DOTALL | re.IGNORECASE)
+    
+    if tools_section:
+        # Extract all product links from this section
+        links = re.findall(r'(.*?)\s*:\s*(https?://\S+)', tools_section.group(0))
+        return links
+    return []
 
 def extract_social_media_links(description):
     social_pattern = r'(?:Find me on social media!|Follow me on:)(.+?)(?:\n\n|\Z)'
@@ -145,8 +150,12 @@ def generate_single_blog_post(video_id):
 
         if shopping_links:
             blog_sections.append("\n## Links to Products Mentioned")
+            blog_sections.append("As an Amazon Associate I earn from qualifying purchases.")
             for product_name, link in shopping_links:
-                blog_sections.append(f"- **{product_name}**: {link}")
+                blog_sections.append(f"- **{product_name.strip()}**: {link.strip()}")
+        else:
+            blog_sections.append("\n## Links to Products Mentioned")
+            blog_sections.append("*No product links found in the video description.*")
 
         sponsor_pattern = r"Sponsored By:(.+?)(?:\n\n|\Z)"
         partner_pattern = r"Partnered With:(.+?)(?:\n\n|\Z)"
