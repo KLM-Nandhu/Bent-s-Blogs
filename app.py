@@ -1,41 +1,35 @@
 import streamlit as st
-import openai
 from youtube_transcript_api import YouTubeTranscriptApi
-from googleapiclient.discovery import build
+from pytube import YouTube
 import re
+import openai
 
-# Set up API clients
+# Set up API client
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-youtube = build("youtube", "v3", developerKey=st.secrets["YOUTUBE_API_KEY"])
+
+# Custom CSS (keep your existing CSS here)
+st.markdown("""
+<style>
+    /* Your existing CSS styles */
+</style>
+<div class="background-design"></div>
+<div class="animated-text">Bent's Woodworking</div>
+""", unsafe_allow_html=True)
 
 def get_video_info(video_id):
     try:
-        request = youtube.videos().list(
-            part="snippet,statistics",
-            id=video_id
-        )
-        response = request.execute()
-
-        if 'items' in response and len(response['items']) > 0:
-            video_info = response['items'][0]['snippet']
-            title = video_info['title']
-            description = video_info['description']
-            thumbnail_url = video_info['thumbnails']['high']['url']
-            return title, description, thumbnail_url
-        else:
-            st.error("No video found with the given ID.")
-            return None, None, None
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        yt = YouTube(url)
+        return yt.title, yt.thumbnail_url, yt.description
     except Exception as e:
-        st.error(f"Error fetching video info: {str(e)}")
-        return None, None, None
+        return f"An error occurred while fetching video info: {str(e)}", None, None
 
-def get_video_transcript(video_id):
+def get_video_transcript_with_timestamps(video_id):
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return transcript
     except Exception as e:
-        st.error(f"Error fetching transcript: {str(e)}")
-        return None
+        return f"An error occurred while fetching the transcript: {str(e)}"
 
 def organize_transcript(transcript):
     prompt = """
@@ -91,95 +85,62 @@ def generate_blog_post(transcript, title, description):
     )
     return response.choices[0].message['content']
 
-def get_comments(video_id):
-    try:
-        comments = []
-        next_page_token = None
-        while len(comments) < 50:
-            response = youtube.commentThreads().list(
-                part="snippet",
-                videoId=video_id,
-                maxResults=min(50 - len(comments), 100),
-                pageToken=next_page_token
-            ).execute()
-            
-            for item in response['items']:
-                comment = item['snippet']['topLevelComment']['snippet']
-                comments.append({
-                    'author': comment['authorDisplayName'],
-                    'text': comment['textDisplay'],
-                    'likes': comment['likeCount'],
-                    'published_at': comment['publishedAt']
-                })
-            
-            next_page_token = response.get('nextPageToken')
-            if not next_page_token:
-                break
-        
-        return comments
-    except Exception as e:
-        st.error(f"Error fetching comments: {str(e)}")
-        return []
-
 def main():
-    st.title("Woodworking Blog Generator")
-
-    video_id = st.text_input("Enter YouTube Video ID")
-
+    st.markdown('<div class="title-container"><h1>Woodworking Blog Generator</h1></div>', unsafe_allow_html=True)
+    
+    video_id = st.text_input("", key="video_id_input", placeholder="Enter YouTube Video ID")
+    
     if video_id:
-        title, description, thumbnail_url = get_video_info(video_id)
+        title, thumbnail_url, description = get_video_info(video_id)
         
-        if title and description and thumbnail_url:
-            st.image(thumbnail_url, use_column_width=True)
-            st.subheader(title)
+        if thumbnail_url:
+            st.markdown(f"""
+            <div class="video-info">
+                <img src="{thumbnail_url}" alt="Video Thumbnail">
+                <span class="video-title">{title}</span>
+            </div>
+            """, unsafe_allow_html=True)
             
-            transcript = get_video_transcript(video_id)
+            transcript = get_video_transcript_with_timestamps(video_id)
             
-            if transcript:
-                organized_transcript = organize_transcript(transcript)
-                
-                if st.button("Show Transcript"):
-                    st.text_area("Organized Transcript", organized_transcript, height=300)
-                
-                blog_post = generate_blog_post(organized_transcript, title, description)
-                
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    st.subheader("Blog Post")
-                    sections = re.split(r'#{1,2}\s', blog_post)
-                    for i, section in enumerate(sections):
-                        if i == 0:  # This is the introduction
-                            st.markdown(section)
-                        else:
-                            title, content = section.split('\n', 1)
-                            with st.expander(title.strip()):
-                                st.markdown(content.strip())
-                
-                with col2:
-                    st.subheader("Product Links")
-                    products = re.findall(r'([\w\s]+):\s*(https?://\S+)', description)
-                    for product, url in products:
-                        st.markdown(f"[{product}]({url})")
+            if isinstance(transcript, list):
+                if st.button("Generate Blog Post", key="generate_button"):
+                    with st.spinner("Generating blog post..."):
+                        organized_transcript = organize_transcript(transcript)
+                        blog_post = generate_blog_post(organized_transcript, title, description)
                     
-                    st.subheader("Comments")
-                    comments = get_comments(video_id)
-                    comment_count = 0
-                    for comment in comments[:10]:
-                        st.text(f"{comment['author']}: {comment['text'][:100]}...")
-                        comment_count += 1
+                    col1, col2 = st.columns([2, 1])
                     
-                    if len(comments) > 10:
-                        if st.button("Load More Comments"):
-                            for comment in comments[10:]:
-                                st.text(f"{comment['author']}: {comment['text'][:100]}...")
-                                comment_count += 1
-                                if comment_count >= 50:
-                                    break
+                    with col1:
+                        st.subheader("Blog Post")
+                        sections = re.split(r'#{1,2}\s', blog_post)
+                        for i, section in enumerate(sections):
+                            if i == 0:  # This is the introduction
+                                st.markdown(section)
+                            else:
+                                title, content = section.split('\n', 1)
+                                with st.expander(title.strip()):
+                                    st.markdown(content.strip())
+                    
+                    with col2:
+                        st.subheader("Product Links")
+                        products = re.findall(r'([\w\s]+):\s*(https?://\S+)', description)
+                        for product, url in products:
+                            st.markdown(f"[{product}]({url})")
+                        
+                        if st.button("Show Transcript"):
+                            st.text_area("Original Transcript", str(transcript), height=300)
             else:
-                st.error("Failed to fetch video transcript. Please check if the video has captions available.")
+                st.error(transcript)  # Display error message if transcript couldn't be fetched
         else:
-            st.error("Failed to fetch video information. Please check the video ID and try again.")
+            st.error(title)  # Display error message if video info couldn't be fetched
+    
+    st.markdown("---")
+    st.markdown('<p class="big-font">Instructions:</p>', unsafe_allow_html=True)
+    st.markdown('<p class="medium-font">1. Enter the YouTube Video ID (e.g., \'dQw4w9WgXcQ\' from \'https://www.youtube.com/watch?v=dQw4w9WgXcQ\')</p>', unsafe_allow_html=True)
+    st.markdown('<p class="medium-font">2. Click \'Generate Blog Post\' to create a woodworking blog post based on the video content</p>', unsafe_allow_html=True)
+    st.markdown('<p class="medium-font">3. Explore the generated blog post, product links, and original transcript</p>', unsafe_allow_html=True)
+    st.markdown('<p class="medium-font">Note: This app works best with woodworking-related videos that have available transcripts.</p>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
