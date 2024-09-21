@@ -1,6 +1,4 @@
 streamlit
-google-api-python-client
 openai
 youtube_transcript_api
-pillow
-requests
+google-api-python-client
