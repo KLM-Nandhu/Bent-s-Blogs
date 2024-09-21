@@ -3,7 +3,6 @@ import os
 from dotenv import load_dotenv
 import googleapiclient.discovery
 from googleapiclient.errors import HttpError
-from youtube_transcript_api import YouTubeTranscriptApi
 import openai
 import re
 import requests
@@ -12,6 +11,7 @@ from urllib.parse import urlparse
 from PIL import Image
 from io import BytesIO
 import json
+import youtube_dl
 
 # Load environment variables
 load_dotenv()
@@ -39,49 +39,51 @@ def get_video_details(video_id):
         return None
 
 def get_video_transcript_with_timestamps(video_id):
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    ydl_opts = {
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'skip_download': True,
+        'outtmpl': '%(id)s.%(ext)s',
+        'subtitlesformat': 'vtt',
+    }
+    
     try:
-        # First, try using YouTubeTranscriptApi
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            
+        if 'subtitles' in info and 'en' in info['subtitles']:
+            subtitle_url = info['subtitles']['en'][0]['url']
+        elif 'automatic_captions' in info and 'en' in info['automatic_captions']:
+            subtitle_url = info['automatic_captions']['en'][0]['url']
+        else:
+            st.error("No English subtitles or automatic captions found.")
+            return None
+
+        # Download and parse the subtitle file
+        response = requests.get(subtitle_url)
+        vtt_content = response.text
+
+        # Parse VTT content
+        transcript = []
+        for item in re.finditer(r'(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})\n((?:.|\n)*?)(?:\n\n|$)', vtt_content):
+            start_time = item.group(1)
+            end_time = item.group(2)
+            text = item.group(3).replace('\n', ' ').strip()
+            
+            # Convert time to seconds
+            start_seconds = sum(float(x) * 60 ** i for i, x in enumerate(reversed(start_time.replace('.', ':').split(':'))))
+            
+            transcript.append({
+                'text': text,
+                'start': start_seconds,
+                'duration': 0  # We don't calculate duration here, but you could if needed
+            })
+
         return transcript
     except Exception as e:
-        st.warning(f"YouTubeTranscriptApi failed: {str(e)}")
-        
-        # If YouTubeTranscriptApi fails, try an alternative method
-        try:
-            # Fetch the video page
-            response = requests.get(f"https://www.youtube.com/watch?v={video_id}")
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Find the script tag containing the transcript data
-            script_tag = soup.find("script", string=lambda text: text and "captionTracks" in text)
-            
-            if script_tag:
-                # Extract and process the transcript data
-                data = json.loads(re.search(r"var ytInitialPlayerResponse = ({.*?});", script_tag.string).group(1))
-                captions = data['captions']['playerCaptionsTracklistRenderer']['captionTracks'][0]
-                caption_url = captions['baseUrl']
-                
-                # Fetch the actual transcript
-                transcript_response = requests.get(caption_url)
-                transcript_soup = BeautifulSoup(transcript_response.text, 'html.parser')
-                
-                # Process the transcript
-                transcript = []
-                for text in transcript_soup.find_all('text'):
-                    start = float(text['start'])
-                    duration = float(text['dur']) if 'dur' in text.attrs else 0
-                    transcript.append({
-                        'text': text.string,
-                        'start': start,
-                        'duration': duration
-                    })
-                
-                return transcript
-            else:
-                return None
-        except Exception as e:
-            st.error(f"An error occurred while fetching the transcript: {str(e)}")
-            return None
+        st.error(f"An error occurred while fetching the transcript: {str(e)}")
+        return None
 
 def get_video_comments(video_id, max_results=10):
     try:
