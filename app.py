@@ -1,165 +1,170 @@
 import streamlit as st
-import os
-from dotenv import load_dotenv
 import googleapiclient.discovery
-from googleapiclient.errors import HttpError
-from youtube_transcript_api import YouTubeTranscriptApi
 import openai
+from youtube_transcript_api import YouTubeTranscriptApi
 import re
+from PIL import Image
 import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from io import BytesIO
 
-# Load environment variables
-load_dotenv()
+# Set up API clients
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=st.secrets["YOUTUBE_API_KEY"])
 
-# Initialize API keys from environment variables
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-openai.api_key = os.getenv("OPENAI_API_KEY")
+def get_transcript(video_id):
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join([entry['text'] for entry in transcript])
+    except Exception as e:
+        st.error(f"Error fetching transcript: {str(e)}")
+        return None
 
-PROMPTS = {
-    1: "Analyze this video transcript and create a detailed blog post. Focus on the main topics discussed, key insights, and any step-by-step processes explained. Organize the content into clear, concise headings and subheadings:",
-    2: "Based on this video transcript, identify and list all tools, materials, or products mentioned. For each item, provide a brief description of its purpose and importance:",
-    3: "Extract 5-7 key learning points or tips from this video that would be valuable for viewers. Present these as concise bullet points:",
-    4: "Summarize the main ideas and conclusions from the video transcript. Highlight any calls to action or next steps suggested for viewers:",
-    5: "Based on the content of this video, suggest 3-5 related topics or videos that viewers might find interesting. Briefly explain the connection to the current video:"
-}
+def process_transcript(transcript):
+    prompt = """
+    This document contains a video transcript. The problem with this document is that the time stamps are in between the content of the transcript. Can you help me organize this content into the following fields:
+    Product name:
+    Starting timestamp:
+    Ending Timestamp:
+    Transcript:
+    The goal is to not summarize any information but just reorganize into this. For the beginning and ending part of the transcript, you can just categorize it as Intro and Outro where the speech is not specific to any product.
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that organizes video transcripts."},
+            {"role": "user", "content": f"{prompt}\n\nTranscript: {transcript}"}
+        ]
+    )
+    return response.choices[0].message['content']
+
+def generate_blog_post(transcript):
+    prompt = """
+    Generate a blog post for a woodworking YouTube channel. The target audience is 65-year-old people who enjoy woodworking as a hobby and have expendable income. The blog post should:
+    1. Show genuine interest in educating the audience
+    2. Improve SEO performance to gain more visibility
+    3. Be organized into sections with headings
+    4. Have crisp, engaging sentences
+    5. Include relevant product recommendations with URLs (if applicable)
+    6. Conclude with a summary of the content
+
+    Use the following transcript to create the blog post:
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a skilled woodworking blogger and SEO expert."},
+            {"role": "user", "content": f"{prompt}\n\nTranscript: {transcript}"}
+        ]
+    )
+    return response.choices[0].message['content']
 
 def get_video_details(video_id):
     try:
-        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        request = youtube.videos().list(part="snippet,statistics,contentDetails", id=video_id)
-        response = request.execute()
-        return response['items'][0]
-    except HttpError as e:
-        st.error(f"An error occurred while fetching video details: {e}")
-        return None
+        response = youtube.videos().list(
+            part="snippet,statistics",
+            id=video_id
+        ).execute()
 
-def get_video_transcript(video_id):
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return ' '.join([entry['text'] for entry in transcript])
+        if 'items' in response:
+            video = response['items'][0]
+            return {
+                'title': video['snippet']['title'],
+                'description': video['snippet']['description'],
+                'thumbnail': video['snippet']['thumbnails']['high']['url'],
+                'view_count': video['statistics']['viewCount'],
+                'like_count': video['statistics']['likeCount'],
+                'comment_count': video['statistics']['commentCount']
+            }
+        else:
+            return None
     except Exception as e:
-        st.error(f"An error occurred while fetching the transcript: {e}")
+        st.error(f"Error fetching video details: {str(e)}")
         return None
 
-def get_video_comments(video_id, max_results=10):
+def get_comments(video_id, page_token=None):
     try:
-        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        request = youtube.commentThreads().list(
+        response = youtube.commentThreads().list(
             part="snippet",
             videoId=video_id,
-            maxResults=max_results,
-            order="relevance"
-        )
-        response = request.execute()
-        return [item['snippet']['topLevelComment']['snippet'] for item in response['items']]
-    except HttpError as e:
-        st.error(f"An error occurred while fetching comments: {e}")
-        return []
+            maxResults=10,
+            pageToken=page_token
+        ).execute()
 
-def process_with_openai(content, prompt):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": content}
-            ]
-        )
-        return response.choices[0].message.content
+        comments = []
+        for item in response['items']:
+            comment = item['snippet']['topLevelComment']['snippet']
+            comments.append({
+                'author': comment['authorDisplayName'],
+                'text': comment['textDisplay'],
+                'likes': comment['likeCount'],
+                'published_at': comment['publishedAt']
+            })
+
+        next_page_token = response.get('nextPageToken')
+        return comments, next_page_token
     except Exception as e:
-        st.error(f"Error processing with OpenAI: {str(e)}")
-        return None
-
-def search_related_images(query, num_images=3):
-    # Implement image search functionality here
-    # This is a placeholder function
-    return [f"https://example.com/image{i}.jpg" for i in range(num_images)]
-
-def get_product_url(product_name):
-    # Implement product search functionality here
-    # This is a placeholder function
-    return f"https://example.com/shop/{product_name.replace(' ', '-')}"
-
-def generate_blog_post(video_id):
-    video_details = get_video_details(video_id)
-    if not video_details:
-        return None
-
-    video_title = video_details['snippet']['title']
-    video_description = video_details['snippet']['description']
-    transcript = get_video_transcript(video_id)
-
-    if not transcript:
-        st.warning("Transcript not available. Generating content based on title and description.")
-        transcript = f"{video_title}\n\n{video_description}"
-
-    blog_content = process_with_openai(transcript, PROMPTS[1])
-    tools_and_materials = process_with_openai(transcript, PROMPTS[2])
-    key_takeaways = process_with_openai(transcript, PROMPTS[3])
-    conclusion = process_with_openai(transcript, PROMPTS[4])
-    related_topics = process_with_openai(transcript, PROMPTS[5])
-
-    comments = get_video_comments(video_id)
-    community_insights = "### Top Comments\n\n"
-    for comment in comments[:5]:
-        community_insights += f"> {comment['textDisplay']}\n\n— {comment['authorDisplayName']}\n\n"
-
-    blog_post = {
-        "title": video_title,
-        "video_url": f"https://www.youtube.com/watch?v={video_id}",
-        "content": blog_content,
-        "tools_and_materials": tools_and_materials,
-        "key_takeaways": key_takeaways,
-        "conclusion": conclusion,
-        "related_topics": related_topics,
-        "community_insights": community_insights
-    }
-
-    return blog_post
+        st.error(f"Error fetching comments: {str(e)}")
+        return [], None
 
 def main():
-    st.set_page_config(layout="wide")
-    st.title("Enhanced YouTube Blog Generator")
+    st.title("Woodworking Blog Generator")
 
-    video_id = st.text_input("Enter a YouTube Video ID")
+    video_id = st.text_input("Enter YouTube Video ID")
 
     if st.button("Generate Blog Post"):
         if video_id:
-            with st.spinner("Generating enhanced blog post... This may take a while."):
-                blog_post = generate_blog_post(video_id)
+            with st.spinner("Fetching video details..."):
+                video_details = get_video_details(video_id)
 
-            if blog_post:
-                st.success("Enhanced blog post generated successfully!")
-
-                col1, col2 = st.columns([2, 1])
-
+            if video_details:
+                st.subheader(video_details['title'])
+                col1, col2 = st.columns(2)
                 with col1:
-                    st.header(blog_post["title"])
-                    st.video(blog_post["video_url"])
-                    st.markdown(blog_post["content"])
-
-                    if st.button("Show Key Takeaways"):
-                        st.markdown(blog_post["key_takeaways"])
-
-                    if st.button("Show Community Insights"):
-                        st.markdown(blog_post["community_insights"])
-
-                    st.subheader("Conclusion")
-                    st.markdown(blog_post["conclusion"])
-
+                    st.image(video_details['thumbnail'], use_column_width=True)
                 with col2:
-                    st.subheader("Tools and Materials")
-                    st.markdown(blog_post["tools_and_materials"])
+                    st.write(f"Views: {video_details['view_count']}")
+                    st.write(f"Likes: {video_details['like_count']}")
+                    st.write(f"Comments: {video_details['comment_count']}")
 
-                    st.subheader("Related Topics")
-                    st.markdown(blog_post["related_topics"])
+                with st.spinner("Fetching and processing transcript..."):
+                    transcript = get_transcript(video_id)
+                    if transcript:
+                        processed_transcript = process_transcript(transcript)
+                        if st.button("Show Transcript"):
+                            st.text_area("Processed Transcript", processed_transcript, height=300)
+
+                        with st.spinner("Generating blog post..."):
+                            blog_post = generate_blog_post(processed_transcript)
+                            sections = re.split(r'\n#+\s', blog_post)
+                            
+                            for i, section in enumerate(sections):
+                                if i == 0:  # This is the introduction
+                                    st.markdown(section)
+                                else:
+                                    title, content = section.split('\n', 1)
+                                    with st.expander(title.strip()):
+                                        st.markdown(content.strip())
+
+                        st.subheader("Product Recommendations")
+                        products = re.findall(r'([\w\s]+):\s*(https?://\S+)', video_details['description'])
+                        for product, url in products:
+                            st.markdown(f"[{product}]({url})")
+
+                        st.subheader("Comments")
+                        comments, next_page_token = get_comments(video_id)
+                        for comment in comments:
+                            st.text(f"{comment['author']}: {comment['text']}")
+                        
+                        if next_page_token:
+                            if st.button("Load More Comments"):
+                                more_comments, _ = get_comments(video_id, next_page_token)
+                                for comment in more_comments:
+                                    st.text(f"{comment['author']}: {comment['text']}")
 
             else:
-                st.warning("Failed to generate blog post. Please check the video ID and try again.")
+                st.error("Failed to fetch video details. Please check the video ID and try again.")
         else:
-            st.error("Please enter a YouTube Video ID.")
+            st.warning("Please enter a YouTube Video ID.")
 
 if __name__ == "__main__":
     main()
