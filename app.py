@@ -9,6 +9,8 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+from PIL import Image
+from io import BytesIO
 
 # Load environment variables
 load_dotenv()
@@ -18,11 +20,11 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 PROMPTS = {
-    1: "Analyze this video transcript and create a detailed blog post. Focus on the specific techniques, tools used, and key steps in the project. Highlight any unique or innovative approaches:",
-    2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the process:",
-    3: "Extract 5-7 key learning points or tips from this video that would be valuable for both beginners and experienced viewers. Emphasize safety tips and best practices:",
-    4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar projects. Include a brief explanation of how each product could be beneficial:",
-    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:"
+    1: "Analyze this video transcript and create a detailed blog post. Organize the content into clear headings and subheadings. Focus on the main topics discussed, key insights, and any step-by-step processes explained. Use concise language and bullet points where appropriate:",
+    2: "Based on this video transcript, identify and list all tools, materials, or products mentioned. For each item, provide a brief description of its purpose and importance. Format the output as a bulleted list:",
+    3: "Extract 5-7 key learning points or tips from this video that would be valuable for viewers. Present these as concise bullet points, focusing on actionable insights:",
+    4: "Summarize the main ideas and conclusions from the video transcript. Highlight any calls to action or next steps suggested for viewers. Format this as a concise conclusion paragraph:",
+    5: "Based on the content of this video, suggest 3-5 related topics or videos that viewers might find interesting. Briefly explain the connection to the current video. Format this as a bulleted list:"
 }
 
 def get_video_details(video_id):
@@ -38,11 +40,12 @@ def get_video_details(video_id):
 def get_video_transcript(video_id):
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return transcript
+        return ' '.join([entry['text'] for entry in transcript])
     except Exception as e:
+        st.error(f"An error occurred while fetching the transcript: {e}")
         return None
 
-def get_video_comments(video_id, max_results=20):
+def get_video_comments(video_id, max_results=10):
     try:
         youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
         request = youtube.commentThreads().list(
@@ -60,7 +63,7 @@ def get_video_comments(video_id, max_results=20):
 def process_with_openai(content, prompt):
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content}
@@ -71,205 +74,129 @@ def process_with_openai(content, prompt):
         st.error(f"Error processing with OpenAI: {str(e)}")
         return None
 
-def extract_chapters(description):
-    chapter_pattern = r'(\d+:\d+)\s+(.+)'
-    chapters = re.findall(chapter_pattern, description)
-    return chapters
+def search_related_images(query, num_images=3):
+    # TODO: Implement image search functionality
+    # This is a placeholder function
+    # You should replace this with an actual image search API
+    return [f"https://via.placeholder.com/300x200.png?text=Related+Image+{i+1}" for i in range(num_images)]
 
-def extract_shopping_links(description):
-    # This pattern looks for any line containing a URL, with or without a product name
-    pattern = r'^(.*?)(?::|-)?\s*(https?://\S+)'
-    matches = re.findall(pattern, description, re.MULTILINE)
+def get_product_url(product_name):
+    # TODO: Implement product search functionality
+    # This is a placeholder function
+    # You should replace this with an actual product search API or web scraping
+    return f"https://example.com/shop/{product_name.replace(' ', '-')}"
+
+def resize_image(image_url, max_width=300):
+    response = requests.get(image_url)
+    img = Image.open(BytesIO(response.content))
     
-    # Clean up the matches
-    links = []
-    for name, url in matches:
-        name = name.strip(' :-')
-        url = url.strip()
-        if name and url.startswith('http'):
-            links.append((name, url))
-        elif url.startswith('http'):  # If no name, use the URL as the name
-            links.append((url, url))
+    # Calculate the new height while maintaining the aspect ratio
+    width_percent = (max_width / float(img.size[0]))
+    new_height = int((float(img.size[1]) * float(width_percent)))
     
-    return links
+    img_resized = img.resize((max_width, new_height), Image.LANCZOS)
+    
+    # Convert the resized image to bytes
+    buf = BytesIO()
+    img_resized.save(buf, format="PNG")
+    return buf.getvalue()
 
-def extract_social_media_links(description):
-    social_pattern = r'(?:Find me on social media!|Follow me on:)(.+?)(?:\n\n|\Z)'
-    social_media = re.findall(social_pattern, description, re.DOTALL)
-    if social_media:
-        return social_media[0].strip()
-    return None
-
-def generate_single_blog_post(video_id):
+def generate_blog_post(video_id):
     video_details = get_video_details(video_id)
-    if video_details:
-        video_title = video_details['snippet']['title']
-        video_description = video_details['snippet']['description']
-        transcript = get_video_transcript(video_id)
-        comments = get_video_comments(video_id)
-        chapters = extract_chapters(video_description)
-        shopping_links = extract_shopping_links(video_description)
-        social_media_info = extract_social_media_links(video_description)
+    if not video_details:
+        return None
 
-        blog_sections = [f"# {video_title}", f"\nVideo URL: https://www.youtube.com/watch?v={video_id}"]
+    video_title = video_details['snippet']['title']
+    video_description = video_details['snippet']['description']
+    transcript = get_video_transcript(video_id)
 
-        blog_sections.append(f"\nViews: {video_details['statistics']['viewCount']}")
-        blog_sections.append(f"Likes: {video_details['statistics']['likeCount']}")
+    if not transcript:
+        st.warning("Transcript not available. Generating content based on title and description.")
+        transcript = f"{video_title}\n\n{video_description}"
 
-        if chapters:
-            blog_sections.append("\n## Video Chapters")
-            for time, title in chapters:
-                blog_sections.append(f"- {time}: {title}")
+    blog_content = process_with_openai(transcript, PROMPTS[1])
+    tools_and_materials = process_with_openai(transcript, PROMPTS[2])
+    key_takeaways = process_with_openai(transcript, PROMPTS[3])
+    conclusion = process_with_openai(transcript, PROMPTS[4])
+    related_topics = process_with_openai(transcript, PROMPTS[5])
 
-        if transcript:
-            full_transcript = ' '.join([entry['text'] for entry in transcript])
-            summary = process_with_openai(full_transcript, PROMPTS[1])
-            blog_sections.append("\n## Video Summary (Based on Transcript)")
-            blog_sections.append(summary)
-        else:
-            summary = process_with_openai(f"Title: {video_title}\n\nDescription: {video_description}", PROMPTS[2])
-            blog_sections.append("\n## Video Summary (Based on Title and Description)")
-            blog_sections.append("\n*Note: This summary is generated based on the video title and description as the transcript was not available.*")
-            blog_sections.append(summary)
+    comments = get_video_comments(video_id)
+    community_insights = "### Top Comments\n\n"
+    for comment in comments[:5]:
+        community_insights += f"> {comment['textDisplay']}\n\n— {comment['authorDisplayName']}\n\n"
 
-        key_points = process_with_openai(summary, PROMPTS[3])
-        blog_sections.append("\n## Key Takeaways")
-        blog_sections.append(key_points)
+    # Search for related images
+    related_images = search_related_images(video_title)
 
-        if comments:
-            comment_texts = [comment['textDisplay'] for comment in comments]
-            enhanced_comments = process_with_openai('\n'.join(comment_texts), PROMPTS[4])
-            blog_sections.append("\n## Community Insights")
-            blog_sections.append(enhanced_comments)
+    blog_post = {
+        "title": video_title,
+        "video_url": f"https://www.youtube.com/watch?v={video_id}",
+        "content": blog_content,
+        "tools_and_materials": tools_and_materials,
+        "key_takeaways": key_takeaways,
+        "conclusion": conclusion,
+        "related_topics": related_topics,
+        "community_insights": community_insights,
+        "related_images": related_images
+    }
 
-            blog_sections.append("\n### Highlighted Comments")
-            for comment in comments[:5]:
-                blog_sections.append(f"\n> {comment['textDisplay']}")
-                blog_sections.append(f"\n— {comment['authorDisplayName']}")
-        else:
-            blog_sections.append("\n## Community Insights")
-            blog_sections.append("*No comments available for this video.*")
-
-        conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", PROMPTS[5])
-        blog_sections.append("\n## Conclusion")
-        blog_sections.append(conclusion)
-
-        if shopping_links:
-            blog_sections.append("\n## Links to Products Mentioned")
-            blog_sections.append("As an Amazon Associate I earn from qualifying purchases.")
-            for product_name, link in shopping_links:
-                if product_name == link:
-                    blog_sections.append(f"- {link}")
-                else:
-                    blog_sections.append(f"- **{product_name}**: {link}")
-        else:
-            blog_sections.append("\n## Links to Products Mentioned")
-            blog_sections.append("*No product links found in the video description.*")
-
-        sponsor_pattern = r"Sponsored By:(.+?)(?:\n\n|\Z)"
-        partner_pattern = r"Partnered With:(.+?)(?:\n\n|\Z)"
-        affiliate_pattern = r"Affiliate For:(.+?)(?:\n\n|\Z)"
-
-        sponsors = re.findall(sponsor_pattern, video_description, re.DOTALL)
-        partners = re.findall(partner_pattern, video_description, re.DOTALL)
-        affiliates = re.findall(affiliate_pattern, video_description, re.DOTALL)
-
-        blog_sections.append("\n## Sponsored By:")
-        if sponsors:
-            for sponsor in sponsors[0].strip().split('\n'):
-                blog_sections.append(f"- {sponsor.strip()}")
-        else:
-            blog_sections.append("*No sponsors mentioned*")
-
-        blog_sections.append("\n## Partnered With:")
-        if partners:
-            for partner in partners[0].strip().split('\n'):
-                blog_sections.append(f"- {partner.strip()}")
-        else:
-            blog_sections.append("*No partners mentioned*")
-
-        blog_sections.append("\n## Affiliate For:")
-        if affiliates:
-            for affiliate in affiliates[0].strip().split('\n'):
-                blog_sections.append(f"- {affiliate.strip()}")
-        else:
-            blog_sections.append("*No affiliates mentioned*")
-
-        blog_sections.append("\n## Find me on social media!")
-        if social_media_info:
-            blog_sections.append(social_media_info)
-        else:
-            blog_sections.append("*No social media information provided*")
-
-        return '\n'.join(blog_sections)
-    
-    return None
-
-def generate_channel_blog_posts(channel_id):
-    try:
-        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        request = youtube.search().list(
-            part="snippet",
-            channelId=channel_id,
-            type="video",
-            order="date",
-            maxResults=50
-        )
-        response = request.execute()
-
-        blog_posts = []
-
-        for item in response['items']:
-            video_id = item['id']['videoId']
-            blog_post = generate_single_blog_post(video_id)
-            if blog_post:
-                blog_posts.append((video_id, blog_post))
-
-        return blog_posts
-    except HttpError as e:
-        error_details = e.error_details[0] if e.error_details else {}
-        if error_details.get('reason') == 'accessNotConfigured':
-            st.error("YouTube Data API v3 is not enabled for your project. Please enable it in the Google Developers Console.")
-        else:
-            st.error(f"An error occurred while accessing the YouTube API: {str(e)}")
-        return []
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        return []
+    return blog_post
 
 def main():
-    st.title("BENT'S BLOG")
+    st.set_page_config(layout="wide")
+    st.title("Enhanced YouTube Blog Generator")
 
-    default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
-    channel_id = st.text_input("Enter your YouTube Channel ID", value=default_channel_id)
+    video_id = st.text_input("Enter a YouTube Video ID")
 
-    video_id = st.text_input("Or enter a specific YouTube Video ID (optional)")
-
-    if st.button("Generate Blog Post(s)"):
+    if st.button("Generate Blog Post"):
         if video_id:
             with st.spinner("Generating enhanced blog post... This may take a while."):
-                blog_post = generate_single_blog_post(video_id)
+                blog_post = generate_blog_post(video_id)
+
             if blog_post:
                 st.success("Enhanced blog post generated successfully!")
-                st.markdown(blog_post)
+
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    st.header(blog_post["title"])
+                    st.video(blog_post["video_url"])
+                    st.markdown(blog_post["content"])
+
+                    # Display related images
+                    st.subheader("Related Images")
+                    image_cols = st.columns(3)
+                    for i, image_url in enumerate(blog_post["related_images"]):
+                        with image_cols[i]:
+                            resized_image = resize_image(image_url)
+                            st.image(resized_image, use_column_width=True)
+
+                    if st.button("Show Key Takeaways"):
+                        st.markdown(blog_post["key_takeaways"])
+
+                    if st.button("Show Community Insights"):
+                        st.markdown(blog_post["community_insights"])
+
+                    st.subheader("Conclusion")
+                    st.markdown(blog_post["conclusion"])
+
+                with col2:
+                    st.subheader("Tools and Materials")
+                    st.markdown(blog_post["tools_and_materials"])
+
+                    # Add product links
+                    tools_list = re.findall(r'- (.*?):', blog_post["tools_and_materials"])
+                    for tool in tools_list:
+                        product_url = get_product_url(tool)
+                        st.markdown(f"[Buy {tool}]({product_url})")
+
+                    st.subheader("Related Topics")
+                    st.markdown(blog_post["related_topics"])
+
             else:
                 st.warning("Failed to generate blog post. Please check the video ID and try again.")
-        elif channel_id:
-            with st.spinner("Generating enhanced blog posts... This may take a while."):
-                blog_posts = generate_channel_blog_posts(channel_id)
-            
-            if blog_posts:
-                st.success(f"Generated {len(blog_posts)} enhanced blog posts!")
-                for video_id, post in blog_posts:
-                    with st.expander(f"Blog Post for Video {video_id}"):
-                        st.markdown(post)
-            else:
-                st.warning("No blog posts were generated. Please check the error messages above and try again.")
         else:
-            st.error("Please enter either a YouTube Channel ID or a specific Video ID.")
-
-        if st.button("Generate Another"):
-            st.experimental_rerun()
+            st.error("Please enter a YouTube Video ID.")
 
 if __name__ == "__main__":
     main()
