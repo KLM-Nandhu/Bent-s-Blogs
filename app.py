@@ -35,7 +35,97 @@ def get_video_info(video_id):
         st.error(f"Error fetching video info: {str(e)}")
         return None, None, None
 
-# ... (rest of the code remains the same)
+def get_video_transcript(video_id):
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        return transcript
+    except Exception as e:
+        st.error(f"Error fetching transcript: {str(e)}")
+        return None
+
+def organize_transcript(transcript):
+    prompt = """
+    This document contains a video transcript. The problem with this document is that the time stamps are in between the content of the transcript. Can you help me organize this content into the following fields:
+    Product name:
+    Starting timestamp:
+    Ending Timestamp:
+    Transcript:
+    The goal is to not summarize any information but just reorganize into this. For the beginning and ending part of the transcript, you can just categorize it as Intro and Outro where the speech is not specific to any product.
+    
+    Transcript:
+    """
+    prompt += str(transcript)
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that organizes video transcripts."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message['content']
+
+def generate_blog_post(transcript, title, description):
+    prompt = f"""
+    Write a blog post targeting 65-year-old people who like woodworking as a hobby and have expendable income. The blog post should genuinely show interest in educating the audience while improving SEO performance to gain more visibility in general.
+
+    Use the following video transcript to create the blog post:
+    Title: {title}
+    Description: {description}
+    Transcript: {transcript}
+
+    The blog post should:
+    1. Have an engaging introduction
+    2. Be divided into 3-5 main sections with clear, descriptive headings
+    3. Include specific, actionable tips for woodworking enthusiasts
+    4. Explain any technical terms in a clear, easy-to-understand manner
+    5. Incorporate relevant keywords for SEO without compromising readability
+    6. Have a conclusion summarizing key points and encouraging engagement
+    7. Be written in a friendly, conversational tone that resonates with older adults
+    8. Address common challenges or questions that older woodworking enthusiasts might have
+    9. Suggest tools or products mentioned in the video (if any)
+
+    Format the blog post in Markdown, using appropriate headings, bullet points, and emphasis where necessary.
+    """
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a skilled woodworking blogger and SEO expert."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message['content']
+
+def get_comments(video_id):
+    try:
+        comments = []
+        next_page_token = None
+        while len(comments) < 50:
+            response = youtube.commentThreads().list(
+                part="snippet",
+                videoId=video_id,
+                maxResults=min(50 - len(comments), 100),
+                pageToken=next_page_token
+            ).execute()
+            
+            for item in response['items']:
+                comment = item['snippet']['topLevelComment']['snippet']
+                comments.append({
+                    'author': comment['authorDisplayName'],
+                    'text': comment['textDisplay'],
+                    'likes': comment['likeCount'],
+                    'published_at': comment['publishedAt']
+                })
+            
+            next_page_token = response.get('nextPageToken')
+            if not next_page_token:
+                break
+        
+        return comments
+    except Exception as e:
+        st.error(f"Error fetching comments: {str(e)}")
+        return []
 
 def main():
     st.title("Woodworking Blog Generator")
