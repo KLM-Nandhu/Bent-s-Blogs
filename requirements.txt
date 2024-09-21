@@ -2,5 +2,4 @@ streamlit
 openai
 youtube_transcript_api
 google-api-python-client
-requests
-beautifulsoup4
+pytube
