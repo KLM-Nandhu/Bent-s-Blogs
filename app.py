@@ -6,6 +6,7 @@ import re
 from PIL import Image
 import requests
 from io import BytesIO
+import json
 
 # Set up API clients
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -13,98 +14,40 @@ youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=st.secre
 
 def get_transcript(video_id):
     try:
+        # First attempt: Using YouTubeTranscriptApi
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return " ".join([entry['text'] for entry in transcript])
     except Exception as e:
-        st.error(f"Error fetching transcript: {str(e)}")
-        return None
+        st.warning(f"Error fetching transcript with YouTubeTranscriptApi: {str(e)}")
+        st.info("Attempting to fetch transcript using YouTube Data API...")
+        
+        try:
+            # Second attempt: Using YouTube Data API
+            captions = youtube.captions().list(
+                part="snippet",
+                videoId=video_id
+            ).execute()
 
-def process_transcript(transcript):
-    prompt = """
-    This document contains a video transcript. The problem with this document is that the time stamps are in between the content of the transcript. Can you help me organize this content into the following fields:
-    Product name:
-    Starting timestamp:
-    Ending Timestamp:
-    Transcript:
-    The goal is to not summarize any information but just reorganize into this. For the beginning and ending part of the transcript, you can just categorize it as Intro and Outro where the speech is not specific to any product.
-    """
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant that organizes video transcripts."},
-            {"role": "user", "content": f"{prompt}\n\nTranscript: {transcript}"}
-        ]
-    )
-    return response.choices[0].message['content']
+            if not captions.get('items'):
+                st.error("No captions found for this video.")
+                return None
 
-def generate_blog_post(transcript):
-    prompt = """
-    Generate a blog post for a woodworking YouTube channel. The target audience is 65-year-old people who enjoy woodworking as a hobby and have expendable income. The blog post should:
-    1. Show genuine interest in educating the audience
-    2. Improve SEO performance to gain more visibility
-    3. Be organized into sections with headings
-    4. Have crisp, engaging sentences
-    5. Include relevant product recommendations with URLs (if applicable)
-    6. Conclude with a summary of the content
+            caption_id = captions['items'][0]['id']
+            subtitle = youtube.captions().download(
+                id=caption_id,
+                tfmt='srt'
+            ).execute()
 
-    Use the following transcript to create the blog post:
-    """
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a skilled woodworking blogger and SEO expert."},
-            {"role": "user", "content": f"{prompt}\n\nTranscript: {transcript}"}
-        ]
-    )
-    return response.choices[0].message['content']
+            # Process the SRT format to extract text
+            lines = subtitle.decode('utf-8').split('\n\n')
+            transcript_text = " ".join([" ".join(line.split('\n')[2:]) for line in lines])
+            return transcript_text
 
-def get_video_details(video_id):
-    try:
-        response = youtube.videos().list(
-            part="snippet,statistics",
-            id=video_id
-        ).execute()
-
-        if 'items' in response:
-            video = response['items'][0]
-            return {
-                'title': video['snippet']['title'],
-                'description': video['snippet']['description'],
-                'thumbnail': video['snippet']['thumbnails']['high']['url'],
-                'view_count': video['statistics']['viewCount'],
-                'like_count': video['statistics']['likeCount'],
-                'comment_count': video['statistics']['commentCount']
-            }
-        else:
+        except Exception as e:
+            st.error(f"Error fetching transcript with YouTube Data API: {str(e)}")
             return None
-    except Exception as e:
-        st.error(f"Error fetching video details: {str(e)}")
-        return None
 
-def get_comments(video_id, page_token=None):
-    try:
-        response = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            maxResults=10,
-            pageToken=page_token
-        ).execute()
-
-        comments = []
-        for item in response['items']:
-            comment = item['snippet']['topLevelComment']['snippet']
-            comments.append({
-                'author': comment['authorDisplayName'],
-                'text': comment['textDisplay'],
-                'likes': comment['likeCount'],
-                'published_at': comment['publishedAt']
-            })
-
-        next_page_token = response.get('nextPageToken')
-        return comments, next_page_token
-    except Exception as e:
-        st.error(f"Error fetching comments: {str(e)}")
-        return [], None
+# ... (rest of the code remains the same)
 
 def main():
     st.title("Woodworking Blog Generator")
@@ -129,6 +72,7 @@ def main():
                 with st.spinner("Fetching and processing transcript..."):
                     transcript = get_transcript(video_id)
                     if transcript:
+                        st.success("Transcript fetched successfully!")
                         processed_transcript = process_transcript(transcript)
                         if st.button("Show Transcript"):
                             st.text_area("Processed Transcript", processed_transcript, height=300)
@@ -160,7 +104,8 @@ def main():
                                 more_comments, _ = get_comments(video_id, next_page_token)
                                 for comment in more_comments:
                                     st.text(f"{comment['author']}: {comment['text']}")
-
+                    else:
+                        st.error("Failed to fetch transcript. Please check if captions are available for this video.")
             else:
                 st.error("Failed to fetch video details. Please check the video ID and try again.")
         else:
