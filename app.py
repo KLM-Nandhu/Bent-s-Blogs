@@ -3,23 +3,23 @@ import openai
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import re
-import requests
-from bs4 import BeautifulSoup
+from pytube import YouTube
 
 # Set up API clients
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 youtube = build("youtube", "v3", developerKey=st.secrets["YOUTUBE_API_KEY"])
 
 def get_video_info(video_id):
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    title = soup.find('meta', property='og:title')['content']
-    description = soup.find('meta', property='og:description')['content']
-    thumbnail_url = soup.find('meta', property='og:image')['content']
-    
-    return title, description, thumbnail_url
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        yt = YouTube(url)
+        title = yt.title
+        description = yt.description
+        thumbnail_url = yt.thumbnail_url
+        return title, description, thumbnail_url
+    except Exception as e:
+        st.error(f"Error fetching video info: {str(e)}")
+        return None, None, None
 
 def get_video_transcript(video_id):
     try:
@@ -168,6 +168,8 @@ def main():
                                 comment_count += 1
                                 if comment_count >= 50:
                                     break
+        else:
+            st.error("Failed to fetch video information. Please check the video ID and try again.")
 
 if __name__ == "__main__":
     main()
