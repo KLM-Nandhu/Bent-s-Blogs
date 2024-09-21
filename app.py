@@ -1,89 +1,77 @@
 import streamlit as st
-import googleapiclient.discovery
 import openai
 from youtube_transcript_api import YouTubeTranscriptApi
+from googleapiclient.discovery import build
 import re
-from PIL import Image
-import requests
-from io import BytesIO
 
 # Set up API clients
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=st.secrets["YOUTUBE_API_KEY"])
+youtube = build("youtube", "v3", developerKey=st.secrets["YOUTUBE_API_KEY"])
 
-def get_transcript(video_id):
+def get_video_info(video_id):
+    try:
+        response = youtube.videos().list(part="snippet", id=video_id).execute()
+        video_info = response['items'][0]['snippet']
+        return video_info['title'], video_info['description'], video_info['thumbnails']['high']['url']
+    except Exception as e:
+        st.error(f"Error fetching video info: {str(e)}")
+        return None, None, None
+
+def get_video_transcript(video_id):
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return " ".join([entry['text'] for entry in transcript])
+        return transcript
     except Exception as e:
-        st.warning(f"Unable to fetch transcript: {str(e)}")
+        st.error(f"Error fetching transcript: {str(e)}")
         return None
 
-def get_video_details(video_id):
-    try:
-        response = youtube.videos().list(
-            part="snippet,statistics",
-            id=video_id
-        ).execute()
-
-        if 'items' in response:
-            video = response['items'][0]
-            return {
-                'title': video['snippet']['title'],
-                'description': video['snippet']['description'],
-                'thumbnail': video['snippet']['thumbnails']['high']['url'],
-                'view_count': video['statistics']['viewCount'],
-                'like_count': video['statistics']['likeCount'],
-                'comment_count': video['statistics']['commentCount']
-            }
-        else:
-            return None
-    except Exception as e:
-        st.error(f"Error fetching video details: {str(e)}")
-        return None
-
-def generate_blog_post(title, description, transcript=None):
-    if transcript:
-        prompt = f"""
-        Generate a blog post for a woodworking YouTube channel based on the following video transcript. The target audience is 65-year-old people who enjoy woodworking as a hobby and have expendable income.
-
-        Video Title: {title}
-        Video Description: {description}
-        Transcript: {transcript}
-
-        The blog post should:
-        1. Show genuine interest in educating the audience about woodworking techniques, tools, and projects
-        2. Use a friendly, conversational tone that resonates with older adults
-        3. Include specific, actionable tips that readers can apply to their own woodworking projects
-        4. Explain any technical terms or jargon in a clear, easy-to-understand manner
-        5. Incorporate relevant keywords for SEO without compromising readability
-        6. Be organized into 4-6 main sections with clear, descriptive headings
-        7. Have crisp, engaging sentences that maintain the reader's interest
-        8. Address common challenges or questions that older woodworking enthusiasts might have
-        9. Conclude with a summary of the key points and an encouragement to try the techniques or projects discussed
-        """
-    else:
-        prompt = f"""
-        Generate a blog post for a woodworking YouTube channel based on the following video title and description. The target audience is 65-year-old people who enjoy woodworking as a hobby and have expendable income.
-
-        Video Title: {title}
-        Video Description: {description}
-
-        The blog post should:
-        1. Show genuine interest in educating the audience about woodworking techniques, tools, and projects
-        2. Use a friendly, conversational tone that resonates with older adults
-        3. Speculate on possible content of the video based on the title and description
-        4. Include general tips and advice related to the topic of the video
-        5. Explain any technical terms or jargon in a clear, easy-to-understand manner
-        6. Incorporate relevant keywords for SEO without compromising readability
-        7. Be organized into 3-4 main sections with clear, descriptive headings
-        8. Have crisp, engaging sentences that maintain the reader's interest
-        9. Address common challenges or questions that older woodworking enthusiasts might have related to the video topic
-        10. Conclude with a summary and an encouragement to watch the video for more detailed information
-        """
+def organize_transcript(transcript):
+    prompt = """
+    This document contains a video transcript. The problem with this document is that the time stamps are in between the content of the transcript. Can you help me organize this content into the following fields:
+    Product name:
+    Starting timestamp:
+    Ending Timestamp:
+    Transcript:
+    The goal is to not summarize any information but just reorganize into this. For the beginning and ending part of the transcript, you can just categorize it as Intro and Outro where the speech is not specific to any product.
+    
+    Transcript:
+    """
+    prompt += str(transcript)
 
     response = openai.ChatCompletion.create(
         model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that organizes video transcripts."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message['content']
+
+def generate_blog_post(transcript, title, description):
+    prompt = f"""
+    Write a blog post targeting 65-year-old people who like woodworking as a hobby and have expendable income. The blog post should genuinely show interest in educating the audience while improving SEO performance to gain more visibility in general.
+
+    Use the following video transcript to create the blog post:
+    Title: {title}
+    Description: {description}
+    Transcript: {transcript}
+
+    The blog post should:
+    1. Have an engaging introduction
+    2. Be divided into 3-5 main sections with clear, descriptive headings
+    3. Include specific, actionable tips for woodworking enthusiasts
+    4. Explain any technical terms in a clear, easy-to-understand manner
+    5. Incorporate relevant keywords for SEO without compromising readability
+    6. Have a conclusion summarizing key points and encouraging engagement
+    7. Be written in a friendly, conversational tone that resonates with older adults
+    8. Address common challenges or questions that older woodworking enthusiasts might have
+    9. Suggest tools or products mentioned in the video (if any)
+
+    Format the blog post in Markdown, using appropriate headings, bullet points, and emphasis where necessary.
+    """
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "You are a skilled woodworking blogger and SEO expert."},
             {"role": "user", "content": prompt}
@@ -91,62 +79,63 @@ def generate_blog_post(title, description, transcript=None):
     )
     return response.choices[0].message['content']
 
-def get_comments(video_id, page_token=None):
+def get_comments(video_id):
     try:
-        response = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            maxResults=10,
-            pageToken=page_token
-        ).execute()
-
         comments = []
-        for item in response['items']:
-            comment = item['snippet']['topLevelComment']['snippet']
-            comments.append({
-                'author': comment['authorDisplayName'],
-                'text': comment['textDisplay'],
-                'likes': comment['likeCount'],
-                'published_at': comment['publishedAt']
-            })
-
-        next_page_token = response.get('nextPageToken')
-        return comments, next_page_token
+        next_page_token = None
+        while len(comments) < 50:
+            response = youtube.commentThreads().list(
+                part="snippet",
+                videoId=video_id,
+                maxResults=min(50 - len(comments), 100),
+                pageToken=next_page_token
+            ).execute()
+            
+            for item in response['items']:
+                comment = item['snippet']['topLevelComment']['snippet']
+                comments.append({
+                    'author': comment['authorDisplayName'],
+                    'text': comment['textDisplay'],
+                    'likes': comment['likeCount'],
+                    'published_at': comment['publishedAt']
+                })
+            
+            next_page_token = response.get('nextPageToken')
+            if not next_page_token:
+                break
+        
+        return comments
     except Exception as e:
         st.error(f"Error fetching comments: {str(e)}")
-        return [], None
+        return []
 
 def main():
     st.title("Woodworking Blog Generator")
 
     video_id = st.text_input("Enter YouTube Video ID")
 
-    if st.button("Generate Blog Post"):
-        if video_id:
-            with st.spinner("Fetching video details..."):
-                video_details = get_video_details(video_id)
-
-            if video_details:
-                st.subheader(video_details['title'])
-                col1, col2 = st.columns(2)
+    if video_id:
+        title, description, thumbnail_url = get_video_info(video_id)
+        
+        if title and description and thumbnail_url:
+            st.image(thumbnail_url, use_column_width=True)
+            st.subheader(title)
+            
+            transcript = get_video_transcript(video_id)
+            
+            if transcript:
+                organized_transcript = organize_transcript(transcript)
+                
+                if st.button("Show Transcript"):
+                    st.text_area("Organized Transcript", organized_transcript, height=300)
+                
+                blog_post = generate_blog_post(organized_transcript, title, description)
+                
+                col1, col2 = st.columns([2, 1])
+                
                 with col1:
-                    st.image(video_details['thumbnail'], use_column_width=True)
-                with col2:
-                    st.write(f"Views: {video_details['view_count']}")
-                    st.write(f"Likes: {video_details['like_count']}")
-                    st.write(f"Comments: {video_details['comment_count']}")
-
-                with st.spinner("Fetching transcript..."):
-                    transcript = get_transcript(video_id)
-                    if transcript:
-                        st.success("Transcript fetched successfully!")
-                    else:
-                        st.warning("No transcript available. Generating blog post based on video title and description.")
-
-                with st.spinner("Generating blog post..."):
-                    blog_post = generate_blog_post(video_details['title'], video_details['description'], transcript)
-                    sections = re.split(r'\n#+\s', blog_post)
-                    
+                    st.subheader("Blog Post")
+                    sections = re.split(r'#{1,2}\s', blog_post)
                     for i, section in enumerate(sections):
                         if i == 0:  # This is the introduction
                             st.markdown(section)
@@ -154,26 +143,27 @@ def main():
                             title, content = section.split('\n', 1)
                             with st.expander(title.strip()):
                                 st.markdown(content.strip())
-
-                st.subheader("Product Recommendations")
-                products = re.findall(r'([\w\s]+):\s*(https?://\S+)', video_details['description'])
-                for product, url in products:
-                    st.markdown(f"[{product}]({url})")
-
-                st.subheader("Comments")
-                comments, next_page_token = get_comments(video_id)
-                for comment in comments:
-                    st.text(f"{comment['author']}: {comment['text']}")
                 
-                if next_page_token:
-                    if st.button("Load More Comments"):
-                        more_comments, _ = get_comments(video_id, next_page_token)
-                        for comment in more_comments:
-                            st.text(f"{comment['author']}: {comment['text']}")
-            else:
-                st.error("Failed to fetch video details. Please check the video ID and try again.")
-        else:
-            st.warning("Please enter a YouTube Video ID.")
+                with col2:
+                    st.subheader("Product Links")
+                    products = re.findall(r'([\w\s]+):\s*(https?://\S+)', description)
+                    for product, url in products:
+                        st.markdown(f"[{product}]({url})")
+                    
+                    st.subheader("Comments")
+                    comments = get_comments(video_id)
+                    comment_count = 0
+                    for comment in comments[:10]:
+                        st.text(f"{comment['author']}: {comment['text'][:100]}...")
+                        comment_count += 1
+                    
+                    if len(comments) > 10:
+                        if st.button("Load More Comments"):
+                            for comment in comments[10:]:
+                                st.text(f"{comment['author']}: {comment['text'][:100]}...")
+                                comment_count += 1
+                                if comment_count >= 50:
+                                    break
 
 if __name__ == "__main__":
     main()
