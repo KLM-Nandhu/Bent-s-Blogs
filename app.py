@@ -238,7 +238,7 @@ def generate_channel_blog_posts(channel_id):
         return []
 
 def main():
-    st.title("Flexible YouTube Blog Generator")
+    st.title("BENT'S BLOG")
 
     default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
     channel_id = st.text_input("Enter your YouTube Channel ID", value=default_channel_id)
