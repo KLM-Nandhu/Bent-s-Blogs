@@ -37,12 +37,12 @@ def get_video_details(video_id):
         st.error(f"An error occurred while fetching video details: {e}")
         return None
 
-def get_video_transcript(video_id):
+def get_video_transcript_with_timestamps(video_id):
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return ' '.join([entry['text'] for entry in transcript])
+        return transcript
     except Exception as e:
-        st.error(f"An error occurred while fetching the transcript: {e}")
+        st.error(f"An error occurred while fetching the transcript: {str(e)}")
         return None
 
 def get_video_comments(video_id, max_results=10):
@@ -108,11 +108,13 @@ def generate_blog_post(video_id):
 
     video_title = video_details['snippet']['title']
     video_description = video_details['snippet']['description']
-    transcript = get_video_transcript(video_id)
+    transcript_with_timestamps = get_video_transcript_with_timestamps(video_id)
 
-    if not transcript:
+    if not transcript_with_timestamps:
         st.warning("Transcript not available. Generating content based on title and description.")
         transcript = f"{video_title}\n\n{video_description}"
+    else:
+        transcript = ' '.join([entry['text'] for entry in transcript_with_timestamps])
 
     blog_content = process_with_openai(transcript, PROMPTS[1])
     tools_and_materials = process_with_openai(transcript, PROMPTS[2])
@@ -137,7 +139,8 @@ def generate_blog_post(video_id):
         "conclusion": conclusion,
         "related_topics": related_topics,
         "community_insights": community_insights,
-        "related_images": related_images
+        "related_images": related_images,
+        "transcript_with_timestamps": transcript_with_timestamps
     }
 
     return blog_post
@@ -176,6 +179,11 @@ def main():
 
                     if st.button("Show Community Insights"):
                         st.markdown(blog_post["community_insights"])
+
+                    if st.button("Show Transcript with Timestamps"):
+                        st.subheader("Video Transcript")
+                        for entry in blog_post["transcript_with_timestamps"]:
+                            st.text(f"[{entry['start']:.2f}s] {entry['text']}")
 
                     st.subheader("Conclusion")
                     st.markdown(blog_post["conclusion"])
