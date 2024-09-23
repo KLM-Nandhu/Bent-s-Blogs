@@ -23,7 +23,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # Set your API keys here
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+openai_api_key = os.environ.get("OPENAI_API_KEY")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
