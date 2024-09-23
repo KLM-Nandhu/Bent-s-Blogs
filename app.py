@@ -1,15 +1,18 @@
-import streamlit as st
+from fastapi import FastAPI, Request, Form
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
 from typing import List, Dict
 import asyncio
-import requests
-from io import BytesIO
-from datetime import datetime
-import base64
 from googleapiclient.discovery import build
-import re
 import os
+from fastapi.responses import HTMLResponse
+
+app = FastAPI()
+
+# Set up Jinja2 templates
+templates = Jinja2Templates(directory="templates")
 
 # Set your API keys here
 openai.api_key = os.environ.get("OPENAI_API_KEY")
