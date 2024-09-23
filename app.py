@@ -1,220 +1,275 @@
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi
-from docx import Document
-from docx.shared import Pt
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-from pytube import YouTube
-import re
 import os
-import base64
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-import io
-# Custom CSS for buttons, text, background, and animation
-st.markdown("""
-<style>
-    body {
-        background: linear-gradient(135deg, #E6F2FF 0%, #FFFFFF 100%);
-        background-attachment: fixed;
-    }
-    .stApp {
-        background: transparent;
-    }
-    .stButton>button {
-        width: auto;
-        background-color: #4A90E2;
-        color: white;
-        border: none;
-        padding: 0.75rem 1.5rem;
-        font-size: 1.1rem;
-        cursor: pointer;
-        transition: background-color 0.3s ease;
-    }
-    .stButton>button:hover {
-        background-color: #357ABD;
-    }
-    .big-font {
-        font-size: 20px !important;
-        color: #2C3E50;
-    }
-    .medium-font {
-        font-size: 16px !important;
-        color: #34495E;
-    }
-    .video-info {
-        display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-        background-color: rgba(255, 255, 255, 0.7);
-        padding: 10px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    .video-info img {
-        width: 120px;
-        height: 90px;
-        margin-right: 20px;
-        border-radius: 5px;
-    }
-    .video-title {
-        font-size: 18px;
-        font-weight: bold;
-        color: #2C3E50;
-    }
-    .title-container {
-        display: flex;
-        justify-content: center;
-        margin-left: 100px;
-        margin-bottom: 30px;
-    }
-    .animated-text {
-        position: fixed;
-        top: 70px;
-        left: 20px;
-        font-size: 28px;
-        font-weight: bold;
-        color: #2C3E50;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-        animation: softMoveAndGlow 3s ease-in-out infinite;
-    }
-    @keyframes softMoveAndGlow {
-        0% { transform: translateY(0px); text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
-        50% { transform: translateY(-10px); text-shadow: 0 0 10px rgba(74, 144, 226, 0.5); }
-        100% { transform: translateY(0px); text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
-    }
-    .stTextInput>div>div>input {
-        font-size: 16px;
-    }
-    .background-design {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-image:
-            radial-gradient(circle at 10% 20%, rgba(74, 144, 226, 0.1) 0%, transparent 50%),
-            radial-gradient(circle at 90% 80%, rgba(74, 144, 226, 0.1) 0%, transparent 50%);
-        z-index: -1;
-    }
-</style>
-<div class="background-design"></div>
-<div class="animated-text">Bent's Woodworking</div>
-""", unsafe_allow_html=True)
-def get_video_info(video_id):
+from dotenv import load_dotenv
+import googleapiclient.discovery
+from googleapiclient.errors import HttpError
+from youtube_transcript_api import YouTubeTranscriptApi
+import openai
+import re
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+
+# Load environment variables
+load_dotenv()
+
+# Initialize API keys from environment variables
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+PROMPTS = {
+    1: "Analyze this video transcript and create a detailed blog post. Focus on the specific techniques, tools used, and key steps in the project. Highlight any unique or innovative approaches:",
+    2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the process:",
+    3: "Extract 5-7 key learning points or tips from this video that would be valuable for both beginners and experienced viewers. Emphasize safety tips and best practices:",
+    4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar projects. Include a brief explanation of how each product could be beneficial:",
+    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:"
+}
+
+def get_video_details(video_id):
     try:
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        yt = YouTube(url)
-        return yt.title, yt.thumbnail_url
-    except Exception as e:
-        return f"An error occurred while fetching video info: {str(e)}", None
-def get_video_transcript_with_timestamps(video_id):
+        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        request = youtube.videos().list(part="snippet,statistics,contentDetails", id=video_id)
+        response = request.execute()
+        return response['items'][0]
+    except HttpError as e:
+        st.error(f"An error occurred while fetching video details: {e}")
+        return None
+
+def get_video_transcript(video_id):
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return transcript
     except Exception as e:
-        return f"An error occurred while fetching the transcript: {str(e)}"
-def sanitize_filename(filename):
-    return re.sub(r'[\\/*?:"<>|]', "", filename).replace(" ", "_")
-def save_transcript_to_word_and_pdf(video_id):
-    title, _ = get_video_info(video_id)
-    if isinstance(title, str) and title.startswith("An error occurred"):
-        return title, None, None
-    transcript = get_video_transcript_with_timestamps(video_id)
-    if isinstance(transcript, str):  # Error occurred
-        return transcript, None, None
-    safe_title = sanitize_filename(title)
-    output_file_docx = f"{safe_title}.docx"
-    output_file_pdf = f"{safe_title}.pdf"
-    # Create Word document
-    doc = Document()
-    title_paragraph = doc.add_paragraph()
-    title_run = title_paragraph.add_run(title)
-    title_run.bold = True
-    title_run.font.size = Pt(16)
-    title_paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-    doc.add_paragraph()  # Add a blank line after the title
-    # Create PDF
-    pdf_buffer = io.BytesIO()
-    pdf = SimpleDocTemplate(pdf_buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='Center', alignment=TA_CENTER))
-    styles.add(ParagraphStyle(name='Left', alignment=TA_LEFT))
-    pdf_content = [Paragraph(title, styles['Center']), Spacer(1, 12)]
-    for entry in transcript:
-        start_time = int(entry['start'])
-        minutes, seconds = divmod(start_time, 60)
-        timestamp = f"{minutes}:{seconds:02d}"
-        # Word document
-        p = doc.add_paragraph()
-        run = p.add_run(f"{timestamp}")
-        run.bold = True
-        p.add_run(f"\n{entry['text']}\n")
-        p.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-        # PDF content
-        pdf_content.append(Paragraph(f"<b>{timestamp}</b>", styles['Left']))
-        pdf_content.append(Paragraph(entry['text'], styles['Left']))
-        pdf_content.append(Spacer(1, 6))
-    doc.save(output_file_docx)
-    pdf.build(pdf_content)
-    return "Transcript saved", output_file_docx, pdf_buffer
-# Streamlit app
-st.markdown('<div class="title-container"><h1>YouTube Transcript</h1></div>', unsafe_allow_html=True)
-video_id = st.text_input("", key="video_id_input", placeholder="Enter YouTube Video ID")
-if video_id:
-    title, thumbnail_url = get_video_info(video_id)
-    if thumbnail_url:
-        st.markdown(f"""
-        <div class="video-info">
-            <img src="{thumbnail_url}" alt="Video Thumbnail">
-            <span class="video-title">{title}</span>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.error(title)  # Display error message if video info couldn't be fetched
-col1, col2, col3 = st.columns([1,2,1])
-with col2:
-    if st.button("Generate Transcript", key="generate_button"):
-        if video_id:
-            with st.spinner("Generating transcript..."):
-                result, output_file_docx, pdf_buffer = save_transcript_to_word_and_pdf(video_id)
-            if output_file_docx and pdf_buffer:
-                st.success("Transcript generated successfully!")
-                download_col1, download_col2 = st.columns(2)
-                with download_col1:
-                    with open(output_file_docx, "rb") as file:
-                        docx_bytes = file.read()
-                        st.download_button(
-                            label="Download as Word",
-                            data=docx_bytes,
-                            file_name=os.path.basename(output_file_docx),
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            key="download_word"
-                        )
-                with download_col2:
-                    pdf_bytes = pdf_buffer.getvalue()
-                    st.download_button(
-                        label="Download as PDF",
-                        data=pdf_bytes,
-                        file_name=os.path.basename(output_file_docx).replace('.docx', '.pdf'),
-                        mime="application/pdf",
-                        key="download_pdf"
-                    )
-            else:
-                st.error(result)
-                st.error("Unable to generate transcript. Please check if the video has captions available.")
-                st.markdown('<p class="medium-font">Possible reasons for this error:</p>', unsafe_allow_html=True)
-                st.markdown("1. The video doesn't have any captions or transcripts.")
-                st.markdown("2. The captions are disabled for this video.")
-                st.markdown("3. The video ID is incorrect or the video doesn't exist.")
-                st.markdown("4. There might be temporary issues with YouTube's transcript API.")
-                st.markdown("Please try another video or check if the video ID is correct.")
+        return None
+
+def get_video_comments(video_id, max_results=20):
+    try:
+        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        request = youtube.commentThreads().list(
+            part="snippet",
+            videoId=video_id,
+            maxResults=max_results,
+            order="relevance"
+        )
+        response = request.execute()
+        return [item['snippet']['topLevelComment']['snippet'] for item in response['items']]
+    except HttpError as e:
+        st.error(f"An error occurred while fetching comments: {e}")
+        return []
+
+def process_with_openai(content, prompt):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": content}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"Error processing with OpenAI: {str(e)}")
+        return None
+
+def extract_chapters(description):
+    chapter_pattern = r'(\d+:\d+)\s+(.+)'
+    chapters = re.findall(chapter_pattern, description)
+    return chapters
+
+def extract_shopping_links(description):
+    # This pattern looks for any line containing a URL, with or without a product name
+    pattern = r'^(.*?)(?::|-)?\s*(https?://\S+)'
+    matches = re.findall(pattern, description, re.MULTILINE)
+    
+    # Clean up the matches
+    links = []
+    for name, url in matches:
+        name = name.strip(' :-')
+        url = url.strip()
+        if name and url.startswith('http'):
+            links.append((name, url))
+        elif url.startswith('http'):  # If no name, use the URL as the name
+            links.append((url, url))
+    
+    return links
+
+def extract_social_media_links(description):
+    social_pattern = r'(?:Find me on social media!|Follow me on:)(.+?)(?:\n\n|\Z)'
+    social_media = re.findall(social_pattern, description, re.DOTALL)
+    if social_media:
+        return social_media[0].strip()
+    return None
+
+def generate_single_blog_post(video_id):
+    video_details = get_video_details(video_id)
+    if video_details:
+        video_title = video_details['snippet']['title']
+        video_description = video_details['snippet']['description']
+        transcript = get_video_transcript(video_id)
+        comments = get_video_comments(video_id)
+        chapters = extract_chapters(video_description)
+        shopping_links = extract_shopping_links(video_description)
+        social_media_info = extract_social_media_links(video_description)
+
+        blog_sections = [f"# {video_title}", f"\nVideo URL: https://www.youtube.com/watch?v={video_id}"]
+
+        blog_sections.append(f"\nViews: {video_details['statistics']['viewCount']}")
+        blog_sections.append(f"Likes: {video_details['statistics']['likeCount']}")
+
+        if chapters:
+            blog_sections.append("\n## Video Chapters")
+            for time, title in chapters:
+                blog_sections.append(f"- {time}: {title}")
+
+        if transcript:
+            full_transcript = ' '.join([entry['text'] for entry in transcript])
+            summary = process_with_openai(full_transcript, PROMPTS[1])
+            blog_sections.append("\n## Video Summary (Based on Transcript)")
+            blog_sections.append(summary)
         else:
-            st.error("Please enter a YouTube Video ID.")
-st.markdown("---")
-st.markdown('<p class="big-font">Instructions:</p>', unsafe_allow_html=True)
-st.markdown('<p class="medium-font">1. Enter the YouTube Video ID (e.g., \'dQw4w9WgXcQ\' from \'https://www.youtube.com/watch?v=dQw4w9WgXcQ\')</p>', unsafe_allow_html=True)
-st.markdown('<p class="medium-font">2. Click \'Generate Transcript\' to create the Word and PDF documents</p>', unsafe_allow_html=True)
-st.markdown('<p class="medium-font">3. Once generated, use the \'Download as Word\' or \'Download as PDF\' buttons to save the files</p>', unsafe_allow_html=True)
-st.markdown('<p class="medium-font">Note: Not all videos have available transcripts. If you encounter an error, try another video.</p>', unsafe_allow_html=True)
+            summary = process_with_openai(f"Title: {video_title}\n\nDescription: {video_description}", PROMPTS[2])
+            blog_sections.append("\n## Video Summary (Based on Title and Description)")
+            blog_sections.append("\n*Note: This summary is generated based on the video title and description as the transcript was not available.*")
+            blog_sections.append(summary)
+
+        key_points = process_with_openai(summary, PROMPTS[3])
+        blog_sections.append("\n## Key Takeaways")
+        blog_sections.append(key_points)
+
+        if comments:
+            comment_texts = [comment['textDisplay'] for comment in comments]
+            enhanced_comments = process_with_openai('\n'.join(comment_texts), PROMPTS[4])
+            blog_sections.append("\n## Community Insights")
+            blog_sections.append(enhanced_comments)
+
+            blog_sections.append("\n### Highlighted Comments")
+            for comment in comments[:5]:
+                blog_sections.append(f"\n> {comment['textDisplay']}")
+                blog_sections.append(f"\n— {comment['authorDisplayName']}")
+        else:
+            blog_sections.append("\n## Community Insights")
+            blog_sections.append("*No comments available for this video.*")
+
+        conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", PROMPTS[5])
+        blog_sections.append("\n## Conclusion")
+        blog_sections.append(conclusion)
+
+        if shopping_links:
+            blog_sections.append("\n## Links to Products Mentioned")
+            blog_sections.append("As an Amazon Associate I earn from qualifying purchases.")
+            for product_name, link in shopping_links:
+                if product_name == link:
+                    blog_sections.append(f"- {link}")
+                else:
+                    blog_sections.append(f"- **{product_name}**: {link}")
+        else:
+            blog_sections.append("\n## Links to Products Mentioned")
+            blog_sections.append("*No product links found in the video description.*")
+
+        sponsor_pattern = r"Sponsored By:(.+?)(?:\n\n|\Z)"
+        partner_pattern = r"Partnered With:(.+?)(?:\n\n|\Z)"
+        affiliate_pattern = r"Affiliate For:(.+?)(?:\n\n|\Z)"
+
+        sponsors = re.findall(sponsor_pattern, video_description, re.DOTALL)
+        partners = re.findall(partner_pattern, video_description, re.DOTALL)
+        affiliates = re.findall(affiliate_pattern, video_description, re.DOTALL)
+
+        blog_sections.append("\n## Sponsored By:")
+        if sponsors:
+            for sponsor in sponsors[0].strip().split('\n'):
+                blog_sections.append(f"- {sponsor.strip()}")
+        else:
+            blog_sections.append("*No sponsors mentioned*")
+
+        blog_sections.append("\n## Partnered With:")
+        if partners:
+            for partner in partners[0].strip().split('\n'):
+                blog_sections.append(f"- {partner.strip()}")
+        else:
+            blog_sections.append("*No partners mentioned*")
+
+        blog_sections.append("\n## Affiliate For:")
+        if affiliates:
+            for affiliate in affiliates[0].strip().split('\n'):
+                blog_sections.append(f"- {affiliate.strip()}")
+        else:
+            blog_sections.append("*No affiliates mentioned*")
+
+        blog_sections.append("\n## Find me on social media!")
+        if social_media_info:
+            blog_sections.append(social_media_info)
+        else:
+            blog_sections.append("*No social media information provided*")
+
+        return '\n'.join(blog_sections)
+    
+    return None
+
+def generate_channel_blog_posts(channel_id):
+    try:
+        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        request = youtube.search().list(
+            part="snippet",
+            channelId=channel_id,
+            type="video",
+            order="date",
+            maxResults=50
+        )
+        response = request.execute()
+
+        blog_posts = []
+
+        for item in response['items']:
+            video_id = item['id']['videoId']
+            blog_post = generate_single_blog_post(video_id)
+            if blog_post:
+                blog_posts.append((video_id, blog_post))
+
+        return blog_posts
+    except HttpError as e:
+        error_details = e.error_details[0] if e.error_details else {}
+        if error_details.get('reason') == 'accessNotConfigured':
+            st.error("YouTube Data API v3 is not enabled for your project. Please enable it in the Google Developers Console.")
+        else:
+            st.error(f"An error occurred while accessing the YouTube API: {str(e)}")
+        return []
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        return []
+
+def main():
+    st.title("BENT'S BLOG")
+
+    default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
+    channel_id = st.text_input("Enter your YouTube Channel ID", value=default_channel_id)
+
+    video_id = st.text_input("Or enter a specific YouTube Video ID (optional)")
+
+    if st.button("Generate Blog Post(s)"):
+        if video_id:
+            with st.spinner("Generating enhanced blog post... This may take a while."):
+                blog_post = generate_single_blog_post(video_id)
+            if blog_post:
+                st.success("Enhanced blog post generated successfully!")
+                st.markdown(blog_post)
+            else:
+                st.warning("Failed to generate blog post. Please check the video ID and try again.")
+        elif channel_id:
+            with st.spinner("Generating enhanced blog posts... This may take a while."):
+                blog_posts = generate_channel_blog_posts(channel_id)
+            
+            if blog_posts:
+                st.success(f"Generated {len(blog_posts)} enhanced blog posts!")
+                for video_id, post in blog_posts:
+                    with st.expander(f"Blog Post for Video {video_id}"):
+                        st.markdown(post)
+            else:
+                st.warning("No blog posts were generated. Please check the error messages above and try again.")
+        else:
+            st.error("Please enter either a YouTube Channel ID or a specific Video ID.")
+
+        if st.button("Generate Another"):
+            st.experimental_rerun()
+
+if __name__ == "__main__":
+    main()
