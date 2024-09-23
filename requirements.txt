@@ -1,5 +1,4 @@
 fastapi==0.68.0
-uvicorn==0.15.0
 youtube_transcript_api==0.6.0
 openai==0.27.8
 google-api-python-client==2.86.0
