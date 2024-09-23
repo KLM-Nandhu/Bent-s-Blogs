@@ -1,275 +1,94 @@
 import streamlit as st
-import os
-from dotenv import load_dotenv
-import googleapiclient.discovery
-from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
+from pytube import YouTube
 import openai
-import re
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from typing import List, Dict
+import asyncio
 
-# Load environment variables
-load_dotenv()
+# Set your OpenAI API key here
+openai.api_key = st.secrets["openai_api_key"]
 
-# Initialize API keys from environment variables
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-PROMPTS = {
-    1: "Analyze this video transcript and create a detailed blog post. Focus on the specific techniques, tools used, and key steps in the project. Highlight any unique or innovative approaches:",
-    2: "Based on this video transcript, identify and list all tools and materials used in the project. For each item, briefly explain its purpose and importance in the process:",
-    3: "Extract 5-7 key learning points or tips from this video that would be valuable for both beginners and experienced viewers. Emphasize safety tips and best practices:",
-    4: "Based on the tools and materials used in this project, suggest 5-10 related products that viewers might find useful for this or similar projects. Include a brief explanation of how each product could be beneficial:",
-    5: "Craft a compelling conclusion for this blog post. Summarize the main project steps, emphasize key learning points, and encourage readers to try the project. Also, invite readers to share their own experiences or variations of this technique:"
-}
-
-def get_video_details(video_id):
+def get_video_info(video_id: str) -> tuple:
     try:
-        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        request = youtube.videos().list(part="snippet,statistics,contentDetails", id=video_id)
-        response = request.execute()
-        return response['items'][0]
-    except HttpError as e:
-        st.error(f"An error occurred while fetching video details: {e}")
-        return None
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        yt = YouTube(url)
+        return yt.title, yt.thumbnail_url, yt.length
+    except Exception as e:
+        return f"An error occurred while fetching video info: {str(e)}", None, None
 
-def get_video_transcript(video_id):
+def get_video_transcript_with_timestamps(video_id: str) -> List[Dict]:
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return transcript
     except Exception as e:
-        return None
+        return f"An error occurred while fetching the transcript: {str(e)}"
 
-def get_video_comments(video_id, max_results=20):
-    try:
-        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        request = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            maxResults=max_results,
-            order="relevance"
-        )
-        response = request.execute()
-        return [item['snippet']['topLevelComment']['snippet'] for item in response['items']]
-    except HttpError as e:
-        st.error(f"An error occurred while fetching comments: {e}")
-        return []
+def format_time(seconds: float) -> str:
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-def process_with_openai(content, prompt):
+async def process_transcript_chunk(chunk: str, video_id: str) -> str:
+    prompt = f"""This is a portion of a video transcript. Please organize this content into the following structure:
+
+For each distinct topic or section, include:
+Product name (if applicable):
+Starting timestamp:
+Ending Timestamp:
+Transcript:
+
+The goal is to not summarize or alter any information, but just reorganize the existing transcript into this structure. Use the provided timestamps to determine the start and end times for each section.
+
+Here's the transcript chunk:
+{chunk}
+
+Please format the response as follows:
+
+[Organized content here]
+"""
+
     try:
-        response = openai.ChatCompletion.create(
+        response = await openai.ChatCompletion.acreate(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": content}
-            ]
+                {"role": "system", "content": "You are a helpful assistant that organizes video transcripts without altering their content."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=2000
         )
         return response.choices[0].message.content
     except Exception as e:
-        st.error(f"Error processing with OpenAI: {str(e)}")
-        return None
+        return f"An error occurred while processing with GPT-4: {str(e)}"
 
-def extract_chapters(description):
-    chapter_pattern = r'(\d+:\d+)\s+(.+)'
-    chapters = re.findall(chapter_pattern, description)
-    return chapters
-
-def extract_shopping_links(description):
-    # This pattern looks for any line containing a URL, with or without a product name
-    pattern = r'^(.*?)(?::|-)?\s*(https?://\S+)'
-    matches = re.findall(pattern, description, re.MULTILINE)
+async def process_full_transcript(transcript: List[Dict], video_id: str) -> str:
+    chunk_size = 10000  # Adjust this value based on your needs
+    full_transcript = " ".join([f"{format_time(entry['start'])}: {entry['text']}" for entry in transcript])
+    chunks = [full_transcript[i:i+chunk_size] for i in range(0, len(full_transcript), chunk_size)]
     
-    # Clean up the matches
-    links = []
-    for name, url in matches:
-        name = name.strip(' :-')
-        url = url.strip()
-        if name and url.startswith('http'):
-            links.append((name, url))
-        elif url.startswith('http'):  # If no name, use the URL as the name
-            links.append((url, url))
+    processed_chunks = []
+    for chunk in chunks:
+        processed_chunk = await process_transcript_chunk(chunk, video_id)
+        processed_chunks.append(processed_chunk)
     
-    return links
+    return "\n\n".join(processed_chunks)
 
-def extract_social_media_links(description):
-    social_pattern = r'(?:Find me on social media!|Follow me on:)(.+?)(?:\n\n|\Z)'
-    social_media = re.findall(social_pattern, description, re.DOTALL)
-    if social_media:
-        return social_media[0].strip()
-    return None
+st.title("YouTube Transcript Processor")
 
-def generate_single_blog_post(video_id):
-    video_details = get_video_details(video_id)
-    if video_details:
-        video_title = video_details['snippet']['title']
-        video_description = video_details['snippet']['description']
-        transcript = get_video_transcript(video_id)
-        comments = get_video_comments(video_id)
-        chapters = extract_chapters(video_description)
-        shopping_links = extract_shopping_links(video_description)
-        social_media_info = extract_social_media_links(video_description)
+video_id = st.text_input("Enter YouTube Video ID")
 
-        blog_sections = [f"# {video_title}", f"\nVideo URL: https://www.youtube.com/watch?v={video_id}"]
-
-        blog_sections.append(f"\nViews: {video_details['statistics']['viewCount']}")
-        blog_sections.append(f"Likes: {video_details['statistics']['likeCount']}")
-
-        if chapters:
-            blog_sections.append("\n## Video Chapters")
-            for time, title in chapters:
-                blog_sections.append(f"- {time}: {title}")
-
-        if transcript:
-            full_transcript = ' '.join([entry['text'] for entry in transcript])
-            summary = process_with_openai(full_transcript, PROMPTS[1])
-            blog_sections.append("\n## Video Summary (Based on Transcript)")
-            blog_sections.append(summary)
-        else:
-            summary = process_with_openai(f"Title: {video_title}\n\nDescription: {video_description}", PROMPTS[2])
-            blog_sections.append("\n## Video Summary (Based on Title and Description)")
-            blog_sections.append("\n*Note: This summary is generated based on the video title and description as the transcript was not available.*")
-            blog_sections.append(summary)
-
-        key_points = process_with_openai(summary, PROMPTS[3])
-        blog_sections.append("\n## Key Takeaways")
-        blog_sections.append(key_points)
-
-        if comments:
-            comment_texts = [comment['textDisplay'] for comment in comments]
-            enhanced_comments = process_with_openai('\n'.join(comment_texts), PROMPTS[4])
-            blog_sections.append("\n## Community Insights")
-            blog_sections.append(enhanced_comments)
-
-            blog_sections.append("\n### Highlighted Comments")
-            for comment in comments[:5]:
-                blog_sections.append(f"\n> {comment['textDisplay']}")
-                blog_sections.append(f"\n— {comment['authorDisplayName']}")
-        else:
-            blog_sections.append("\n## Community Insights")
-            blog_sections.append("*No comments available for this video.*")
-
-        conclusion = process_with_openai(f"Video title: {video_title}\nSummary: {summary}", PROMPTS[5])
-        blog_sections.append("\n## Conclusion")
-        blog_sections.append(conclusion)
-
-        if shopping_links:
-            blog_sections.append("\n## Links to Products Mentioned")
-            blog_sections.append("As an Amazon Associate I earn from qualifying purchases.")
-            for product_name, link in shopping_links:
-                if product_name == link:
-                    blog_sections.append(f"- {link}")
+if st.button("Process Transcript"):
+    if video_id:
+        with st.spinner("Processing transcript..."):
+            title, thumbnail_url, video_length = get_video_info(video_id)
+            if thumbnail_url:
+                st.image(thumbnail_url, caption=title)
+                transcript = get_video_transcript_with_timestamps(video_id)
+                if isinstance(transcript, list):
+                    processed_transcript = asyncio.run(process_full_transcript(transcript, video_id))
+                    st.text_area("Processed Transcript:", processed_transcript, height=1000)
                 else:
-                    blog_sections.append(f"- **{product_name}**: {link}")
-        else:
-            blog_sections.append("\n## Links to Products Mentioned")
-            blog_sections.append("*No product links found in the video description.*")
-
-        sponsor_pattern = r"Sponsored By:(.+?)(?:\n\n|\Z)"
-        partner_pattern = r"Partnered With:(.+?)(?:\n\n|\Z)"
-        affiliate_pattern = r"Affiliate For:(.+?)(?:\n\n|\Z)"
-
-        sponsors = re.findall(sponsor_pattern, video_description, re.DOTALL)
-        partners = re.findall(partner_pattern, video_description, re.DOTALL)
-        affiliates = re.findall(affiliate_pattern, video_description, re.DOTALL)
-
-        blog_sections.append("\n## Sponsored By:")
-        if sponsors:
-            for sponsor in sponsors[0].strip().split('\n'):
-                blog_sections.append(f"- {sponsor.strip()}")
-        else:
-            blog_sections.append("*No sponsors mentioned*")
-
-        blog_sections.append("\n## Partnered With:")
-        if partners:
-            for partner in partners[0].strip().split('\n'):
-                blog_sections.append(f"- {partner.strip()}")
-        else:
-            blog_sections.append("*No partners mentioned*")
-
-        blog_sections.append("\n## Affiliate For:")
-        if affiliates:
-            for affiliate in affiliates[0].strip().split('\n'):
-                blog_sections.append(f"- {affiliate.strip()}")
-        else:
-            blog_sections.append("*No affiliates mentioned*")
-
-        blog_sections.append("\n## Find me on social media!")
-        if social_media_info:
-            blog_sections.append(social_media_info)
-        else:
-            blog_sections.append("*No social media information provided*")
-
-        return '\n'.join(blog_sections)
-    
-    return None
-
-def generate_channel_blog_posts(channel_id):
-    try:
-        youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        request = youtube.search().list(
-            part="snippet",
-            channelId=channel_id,
-            type="video",
-            order="date",
-            maxResults=50
-        )
-        response = request.execute()
-
-        blog_posts = []
-
-        for item in response['items']:
-            video_id = item['id']['videoId']
-            blog_post = generate_single_blog_post(video_id)
-            if blog_post:
-                blog_posts.append((video_id, blog_post))
-
-        return blog_posts
-    except HttpError as e:
-        error_details = e.error_details[0] if e.error_details else {}
-        if error_details.get('reason') == 'accessNotConfigured':
-            st.error("YouTube Data API v3 is not enabled for your project. Please enable it in the Google Developers Console.")
-        else:
-            st.error(f"An error occurred while accessing the YouTube API: {str(e)}")
-        return []
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        return []
-
-def main():
-    st.title("BENT'S BLOG")
-
-    default_channel_id = "UCiQO4At218jezfjPqDzn1CQ"
-    channel_id = st.text_input("Enter your YouTube Channel ID", value=default_channel_id)
-
-    video_id = st.text_input("Or enter a specific YouTube Video ID (optional)")
-
-    if st.button("Generate Blog Post(s)"):
-        if video_id:
-            with st.spinner("Generating enhanced blog post... This may take a while."):
-                blog_post = generate_single_blog_post(video_id)
-            if blog_post:
-                st.success("Enhanced blog post generated successfully!")
-                st.markdown(blog_post)
+                    st.error(transcript)
             else:
-                st.warning("Failed to generate blog post. Please check the video ID and try again.")
-        elif channel_id:
-            with st.spinner("Generating enhanced blog posts... This may take a while."):
-                blog_posts = generate_channel_blog_posts(channel_id)
-            
-            if blog_posts:
-                st.success(f"Generated {len(blog_posts)} enhanced blog posts!")
-                for video_id, post in blog_posts:
-                    with st.expander(f"Blog Post for Video {video_id}"):
-                        st.markdown(post)
-            else:
-                st.warning("No blog posts were generated. Please check the error messages above and try again.")
-        else:
-            st.error("Please enter either a YouTube Channel ID or a specific Video ID.")
-
-        if st.button("Generate Another"):
-            st.experimental_rerun()
-
-if __name__ == "__main__":
-    main()
+                st.error(title)
+    else:
+        st.error("Please enter a YouTube Video ID.")
