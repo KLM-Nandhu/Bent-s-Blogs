@@ -1,7 +1,5 @@
-streamlit
-python-dotenv
-google-api-python-client
-youtube_transcript_api
-openai
-requests
-beautifulsoup4
+streamlit==1.22.0
+youtube_transcript_api==0.6.0
+pytube==15.0.0
+openai==0.27.7
+aiohttp==3.8.4
