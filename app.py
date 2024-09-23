@@ -9,10 +9,11 @@ from datetime import datetime
 import base64
 from googleapiclient.discovery import build
 import re
+import os
 
 # Set your API keys here
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
@@ -72,7 +73,13 @@ def get_video_transcript_with_timestamps(video_id: str) -> List[Dict]:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return transcript
     except Exception as e:
-        return f"An error occurred while fetching the transcript: {str(e)}"
+        error_message = str(e)
+        if "Subtitles are disabled for this video" in error_message:
+            return f"Error: Subtitles are disabled for this video (ID: {video_id}). Please try another video."
+        elif "Could not retrieve a transcript for the video" in error_message:
+            return f"Error: Could not retrieve a transcript for the video (ID: {video_id}). This might be due to region restrictions or other YouTube API limitations."
+        else:
+            return f"An unexpected error occurred while fetching the transcript: {error_message}"
 
 def format_time(seconds: float) -> str:
     hours, remainder = divmod(int(seconds), 3600)
@@ -188,182 +195,186 @@ def format_blog_post(blog_post: str, video_info: Dict) -> str:
     
     return formatted_post
 
-st.set_page_config(layout="wide")
+def main():
+    st.set_page_config(layout="wide")
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
-    
-    body {
-        color: #333;
-        font-family: 'Roboto', sans-serif;
-        line-height: 1.6;
-        background-color: #f0f2f5;
-    }
-    .main {
-        max-width: 800px;
-        margin: 0 auto;
-        background-color: white;
-        padding: 2rem;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        border-radius: 8px;
-    }
-    .stButton>button {
-        width: 100%;
-        background-color: #4CAF50;
-        color: white;
-        border: none;
-        padding: 12px 20px;
-        text-align: center;
-        text-decoration: none;
-        display: inline-block;
-        font-size: 18px;
-        margin: 4px 2px;
-        cursor: pointer;
-        border-radius: 5px;
-        transition: background-color 0.3s;
-    }
-    .stButton>button:hover {
-        background-color: #45a049;
-    }
-    .blog-post {
-        margin-top: 2rem;
-    }
-    .blog-post h1 {
-        font-size: 2.8em;
-        color: #2c3e50;
-        margin-bottom: 0.5em;
-        border-bottom: 2px solid #3498db;
-        padding-bottom: 10px;
-        font-weight: 700;
-    }
-    .blog-post h2 {
-        font-size: 2.2em;
-        color: #34495e;
-        margin-top: 1.2em;
-        margin-bottom: 0.5em;
-        font-weight: 700;
-        border-left: 4px solid #3498db;
-        padding-left: 10px;
-    }
-    .blog-post h3 {
-        font-size: 1.8em;
-        color: #34495e;
-        margin-top: 1em;
-        margin-bottom: 0.5em;
-        font-weight: 600;
-    }
-    .blog-post p {
-        margin-bottom: 1em;
-        text-align: justify;
-        font-size: 1.1em;
-        line-height: 1.8;
-    }
-    .blog-meta {
-        font-size: 0.9em;
-        color: #7f8c8d;
-        margin-bottom: 1em;
-    }
-    .blog-content {
-        background-color: #fff;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    .blog-image {
-        max-width: 100%;
-        height: auto;
-        margin: 1em 0;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    .comments-container {
-        max-width: 800px;
-        margin: 2rem auto;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 20px;
-        background-color: #f9f9f9;
-    }
-    .comments-scrollable {
-        max-height: 500px;
-        overflow-y: auto;
-    }
-    .comment {
-        background-color: #ffffff;
-        border-left: 4px solid #3498db;
-        padding: 15px;
-        margin-bottom: 15px;
-        border-radius: 4px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
-    .comment-author {
-        font-weight: bold;
-        color: #2c3e50;
-    }
-    .comment-date {
-        font-size: 0.8em;
-        color: #7f8c8d;
-    }
-    .comment-text {
-        margin-top: 5px;
-    }
-    .comment-likes {
-        font-size: 0.9em;
-        color: #3498db;
-        margin-top: 5px;
-    }
-    a {
-        color: #3498db;
-        text-decoration: none;
-    }
-    a:hover {
-        text-decoration: underline;
-    }
-</style>
-""", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
+        
+        body {
+            color: #333;
+            font-family: 'Roboto', sans-serif;
+            line-height: 1.6;
+            background-color: #f0f2f5;
+        }
+        .main {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 2rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+        .stButton>button {
+            width: 100%;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 18px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .stButton>button:hover {
+            background-color: #45a049;
+        }
+        .blog-post {
+            margin-top: 2rem;
+        }
+        .blog-post h1 {
+            font-size: 2.8em;
+            color: #2c3e50;
+            margin-bottom: 0.5em;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            font-weight: 700;
+        }
+        .blog-post h2 {
+            font-size: 2.2em;
+            color: #34495e;
+            margin-top: 1.2em;
+            margin-bottom: 0.5em;
+            font-weight: 700;
+            border-left: 4px solid #3498db;
+            padding-left: 10px;
+        }
+        .blog-post h3 {
+            font-size: 1.8em;
+            color: #34495e;
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+        .blog-post p {
+            margin-bottom: 1em;
+            text-align: justify;
+            font-size: 1.1em;
+            line-height: 1.8;
+        }
+        .blog-meta {
+            font-size: 0.9em;
+            color: #7f8c8d;
+            margin-bottom: 1em;
+        }
+        .blog-content {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .blog-image {
+            max-width: 100%;
+            height: auto;
+            margin: 1em 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .comments-container {
+            max-width: 800px;
+            margin: 2rem auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .comments-scrollable {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .comment {
+            background-color: #ffffff;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .comment-author {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .comment-date {
+            font-size: 0.8em;
+            color: #7f8c8d;
+        }
+        .comment-text {
+            margin-top: 5px;
+        }
+        .comment-likes {
+            font-size: 0.9em;
+            color: #3498db;
+            margin-top: 5px;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
-st.title("BENT-S-BLOG")
+    st.title("BENT-S-BLOG")
 
-video_id = st.text_input("Enter YouTube Video ID")
+    video_id = st.text_input("Enter YouTube Video ID")
 
-if st.button("Process Transcript and Generate Blog Post"):
-    if video_id:
-        with st.spinner("Processing transcript and generating blog post..."):
-            video_info = get_video_info(video_id)
-            if isinstance(video_info, dict):
-                transcript = get_video_transcript_with_timestamps(video_id)
-                comments = get_all_comments(video_id)
-                if isinstance(transcript, list) and isinstance(comments, list):
-                    processed_transcript = asyncio.run(process_full_transcript(transcript, video_id))
-                    blog_post = asyncio.run(generate_blog_post(processed_transcript, video_info))
-                    formatted_blog_post = format_blog_post(blog_post, video_info)
-                    
-                    # Display the blog post content
-                    st.markdown("<div class='blog-post'>", unsafe_allow_html=True)
-                    st.markdown("<div class='blog-content'>", unsafe_allow_html=True)
-                    st.markdown(formatted_blog_post, unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                    
-                    # Display comments in a separate container with internal scrolling
-                    st.markdown("<div class='comments-container'>", unsafe_allow_html=True)
-                    st.markdown("<h2>Comments</h2>", unsafe_allow_html=True)
-                    st.markdown("<div class='comments-scrollable'>", unsafe_allow_html=True)
-                    for comment in comments:
-                        st.markdown(f"""
-<div class="comment">
-    <div class="comment-author">{comment['author']}</div>
-    <div class="comment-date">{comment['published_at']}</div>
-    <div class="comment-text">{comment['text']}</div>
-    <div class="comment-likes">👍 {comment['likes']}</div>
-</div>
-""", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
+    if st.button("Process Transcript and Generate Blog Post"):
+        if video_id:
+            with st.spinner("Processing transcript and generating blog post..."):
+                video_info = get_video_info(video_id)
+                if isinstance(video_info, dict):
+                    transcript = get_video_transcript_with_timestamps(video_id)
+                    comments = get_all_comments(video_id)
+                    if isinstance(transcript, list) and isinstance(comments, list):
+                        processed_transcript = asyncio.run(process_full_transcript(transcript, video_id))
+                        blog_post = asyncio.run(generate_blog_post(processed_transcript, video_info))
+                        formatted_blog_post = format_blog_post(blog_post, video_info)
+                        
+                        # Display the blog post content
+                        st.markdown("<div class='blog-post'>", unsafe_allow_html=True)
+                        st.markdown("<div class='blog-content'>", unsafe_allow_html=True)
+                        st.markdown(formatted_blog_post, unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        
+                        # Display comments
+                        st.markdown("<div class='comments-container'>", unsafe_allow_html=True)
+                        st.markdown("<h2>Comments</h2>", unsafe_allow_html=True)
+                        st.markdown("<div class='comments-scrollable'>", unsafe_allow_html=True)
+                        for comment in comments:
+                            st.markdown(f"""
+    <div class="comment">
+        <div class="comment-author">{comment['author']}</div>
+        <div class="comment-date">{comment['published_at']}</div>
+         <div class="comment-text">{comment['text']}</div>
+        <div class="comment-likes">👍 {comment['likes']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    else:
+                        st.error(transcript if isinstance(transcript, str) else comments)
                 else:
-                    st.error(transcript if isinstance(transcript, str) else comments)
-            else:
-                st.error(video_info)
-    else:
-         st.error("Please enter a YouTube Video ID.")
+                    st.error(video_info)
+        else:
+             st.error("Please enter a YouTube Video ID.")
+
+if __name__ == "__main__":
+    main()
