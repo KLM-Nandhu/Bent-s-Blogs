@@ -1,15 +1,23 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from youtube_transcript_api import YouTubeTranscriptApi
 import openai
 from typing import List, Dict
 import asyncio
+import requests
+from io import BytesIO
+from datetime import datetime
+import base64
 from googleapiclient.discovery import build
-import os
 import re
+import os
 
 app = FastAPI()
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Set up Jinja2 templates
 templates = Jinja2Templates(directory="templates")
@@ -76,13 +84,7 @@ def get_video_transcript_with_timestamps(video_id: str) -> List[Dict]:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
         return transcript
     except Exception as e:
-        error_message = str(e)
-        if "Subtitles are disabled for this video" in error_message:
-            return f"Error: Subtitles are disabled for this video (ID: {video_id}). Please try another video."
-        elif "Could not retrieve a transcript for the video" in error_message:
-            return f"Error: Could not retrieve a transcript for the video (ID: {video_id}). This might be due to region restrictions or other YouTube API limitations."
-        else:
-            return f"An unexpected error occurred while fetching the transcript: {error_message}"
+        return f"An error occurred while fetching the transcript: {str(e)}"
 
 def format_time(seconds: float) -> str:
     hours, remainder = divmod(int(seconds), 3600)
