@@ -1,5 +1,7 @@
 streamlit
+python-dotenv
+google-api-python-client
 youtube_transcript_api
-python-docx
-pytube
-reportlab
+openai
+requests
+beautifulsoup4
